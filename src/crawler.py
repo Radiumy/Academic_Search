@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from typing import List, Dict, Set, Optional, Tuple
+from typing import List, Dict, Set, Optional, Tuple, Any
 from pydantic import BaseModel, Field
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy
@@ -62,14 +62,13 @@ class Person(BaseModel):
     last_updated: str = ""
 
 class PageContent(BaseModel):
+    model_config = {"arbitrary_types_allowed": True}
+
     url: str
     html: str
     text: str
     title: str
-    links: List[Dict[str, str]]
-
-    class Config:
-        arbitrary_types_allowed = True
+    links: List[Dict[str, Any]]
 
 class CachedPage(BaseModel):
     """Model for cached page data"""
@@ -77,7 +76,7 @@ class CachedPage(BaseModel):
     html: str
     cleaned_html: str
     title: str
-    links: List[Dict[str, str]]
+    links: List[Dict[str, Any]]
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
     def to_page_content(self) -> PageContent:
@@ -110,7 +109,7 @@ class AcademicCrawler:
                 base_url=openai_api_base,
                 timeout=openai_timeout,
                 max_retries=openai_max_retries,
-                http_client=httpx.AsyncClient(proxies=openai_proxy),
+                http_client=httpx.AsyncClient(proxy=openai_proxy),
             )
         ]
         self.current_client_idx = 0
@@ -237,8 +236,8 @@ class AcademicCrawler:
                 rate_limit_codes=[429, 503, 504, 403]  # Added 403 for forbidden
             ),
             monitor=CrawlerMonitor(
-                max_visible_rows=15,
-                display_mode=DisplayMode.DETAILED
+                enable_ui=True,
+                max_width=120
             )
         )
 
@@ -257,6 +256,44 @@ class AcademicCrawler:
             await self.session.close()
         # Cleanup searx
         await self.searx.cleanup()
+
+    async def save_progress(self):
+        """Save current crawling progress to file"""
+        progress_data = {
+            "visited_urls": list(self.visited_urls),
+            "total_visited": len(self.visited_urls),
+            "crawled_content_count": len(self.crawled_content),
+            "timestamp": datetime.now().isoformat()
+        }
+
+        progress_file = self.cache_dir / "progress.json"
+        try:
+            with open(progress_file, 'w', encoding='utf-8') as f:
+                json.dump(progress_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Progress saved: {len(self.visited_urls)} URLs visited")
+        except Exception as e:
+            logger.error(f"Failed to save progress: {str(e)}")
+
+    def save_profile(self, person: Person, school_code: str) -> None:
+        """Save person profile to file (simplified version for compatibility)"""
+        # Create school directory
+        school_dir = self.profiles_dir / school_code.lower()
+        school_dir.mkdir(exist_ok=True)
+
+        # Generate filename from person's name
+        safe_name = re.sub(r'[^\w\s-]', '', person.name.lower()).replace(' ', '_')
+        profile_path = school_dir / f"{safe_name}.json"
+
+        # Convert person to dict
+        data = person.model_dump()
+
+        # Save to file
+        try:
+            with open(profile_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            logger.debug(f"Saved profile for {person.name}")
+        except Exception as e:
+            logger.error(f"Failed to save profile for {person.name}: {str(e)}")
 
     async def get_next_client(self):
         client = self.clients[self.current_client_idx]
@@ -662,7 +699,7 @@ class AcademicCrawler:
             
             # Save to cache
             with open(cache_file, 'w') as f:
-                json.dump(profile.dict(), f)
+                json.dump(profile.model_dump(), f)
                 
             return profile
             
@@ -887,7 +924,7 @@ class AcademicCrawler:
         profile_path = school_dir / f"{safe_name}.json"
         
         # Convert person to dict
-        new_data = person.dict()
+        new_data = person.model_dump()
         
         # If profile exists, merge with existing data
         if profile_path.exists():
@@ -1046,7 +1083,7 @@ class AcademicCrawler:
                 
                 save_path = save_dir / f"{person.name.lower().replace(' ', '_')}.json"
                 with open(save_path, 'w') as f:
-                    json.dump(updated_person.dict(), f, indent=2)
+                    json.dump(updated_person.model_dump(), f, indent=2)
                 
                 return updated_person
                 
@@ -1240,7 +1277,7 @@ Please analyze the following pages and extract updated information in JSON forma
 
     def update_person_profile(self, person: Person, extracted: dict) -> Person:
         """Update person profile with new information, keeping existing data if new data is empty"""
-        updated = person.dict()
+        updated = person.model_dump()
         
         for key, new_value in extracted.items():
             if not new_value:  # Skip empty values

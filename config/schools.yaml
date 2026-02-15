@@ -1,0 +1,7 @@
+schools:
+  - name: "清华大学"
+    code: "tsinghua"
+    rank: 1
+    department: "计算机科学与技术系"
+    url: "https://ac.cs.tsinghua.edu.cn/"
+    tier: 1

@@ -1,0 +1,32 @@
+# Core dependencies for Academic Web Crawler
+crawl4ai==0.8.0           # Web crawling framework for AI applications
+openai==2.21.0             # OpenAI API client (version >=1.0.0)
+flair==0.15.1              # NLP library for named entity recognition
+pydantic==2.12.5           # Data validation and serialization
+httpx==0.28.1              # Async HTTP client
+aiohttp==3.13.3            # Async HTTP client for web crawling
+aiofiles==25.1.0             # Async file operations
+beautifulsoup4==4.14.3     # HTML parsing
+lxml==5.3.0                # Fast HTML parser backend for BeautifulSoup
+tenacity==9.1.4            # Retry decorator for async operations
+tqdm==4.67.3               # Progress bars
+PyYAML==6.0.2              # YAML configuration parsing
+torch==2.5.1               # PyTorch (required by flair)
+numpy==2.2.2               # Numerical computing (required by qdrant-client and vector operations)
+qdrant-client==1.16.2      # Vector database client for storing embeddings
+
+# Optional development dependencies
+# pytest==8.3.4            # Testing framework
+# pytest-asyncio==0.25.2   # Async test support
+# black==24.10.0           # Code formatting
+# mypy==1.14.1             # Type checking
+# requests==2.32.3         # Synchronous HTTP client (not required but useful)
+
+# Installation notes:
+# 1. Basic installation: pip install -r requirements.txt
+# 2. For crawl4ai, you may need to install browser dependencies:
+#    - playwright install chromium
+# 3. For PyTorch with GPU support, see: https://pytorch.org/get-started/locally/
+#    Example for CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# 4. Some packages may require system dependencies (e.g., lxml requires libxml2)
+# 5. qdrant-client may require gRPC dependencies on some systems

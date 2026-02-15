@@ -8,7 +8,7 @@ from datetime import datetime
 async def main():
     parser = argparse.ArgumentParser(description='Academic POI Crawler')
     parser.add_argument('--config', type=str, required=True, help='Path to config file')
-    parser.add_argument('--openai-key', type=str, required=True, default='sk-TLoMP5smKo84g0rQUg27g5eEb71rY6sVNdWH0FfneTLhyGb5', help='OpenAI API key')
+    parser.add_argument('--openai-key', type=str, required=False, default='sk-TLoMP5smKo84g0rQUg27g5eEb71rY6sVNdWH0FfneTLhyGb5', help='OpenAI API key')
     parser.add_argument('--tier', type=int, help='Only process schools in this tier')
     parser.add_argument('--openai-base', type=str, default="https://api.alibj.aiyu.fun/v1", help='OpenAI API base URL')
     parser.add_argument('--openai-timeout', type=int, default=60, help='OpenAI timeout in seconds')

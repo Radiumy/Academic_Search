@@ -104,8 +104,8 @@ class DFSCrawler:
         )
 
         self.monitor = CrawlerMonitor(
-            max_visible_rows=15,
-            display_mode=DisplayMode.DETAILED
+            enable_ui=True,
+            max_width=120
         )
 
         # Use documented dispatcher configuration

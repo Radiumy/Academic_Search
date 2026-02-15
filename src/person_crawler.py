@@ -229,13 +229,13 @@ class AcademicSpider:
         """Process person information using crawl4ai and OpenAI"""
         # Crawl related pages
         async with AsyncWebCrawler(config=self.browser_config) as crawler:
-            results = await crawler.run_many(urls=urls)
-            
+            async_results = await crawler.arun_many(urls=urls)
+
             # Collect all text content
             all_content = []
             scholar_url = ""
-            
-            for result in results:
+
+            async for result in async_results:
                 if result.success:
                     if "scholar.google.com" in result.url:
                         scholar_url = result.url

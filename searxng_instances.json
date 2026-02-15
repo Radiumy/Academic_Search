@@ -1,0 +1,23 @@
+{
+  "instances": {
+    "https://searxng.alibj.aiyu.fun": {
+      "version": "2025.1",
+      "http": {
+        "status_code": 200
+      },
+      "timing": {
+        "search": {
+          "all": {
+            "mean": 0.3
+          }
+        }
+      },
+      "uptime": {
+        "uptimeMonth": 99
+      },
+      "network": {
+        "country_code": "CN"
+      }
+    }
+  }
+}
