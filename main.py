@@ -62,4 +62,4 @@ if __name__ == "__main__":
         filename=f'crawler_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
     )
     
-    asyncio.run(main()) 
+    asyncio.run(main())     

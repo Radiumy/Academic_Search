@@ -116,17 +116,21 @@ class AcademicCrawler:
         
         # Use default browser config that works
         self.browser_config = BrowserConfig()  # Use default settings
-        
-        # Add URL filtering for faculty pages with more diverse patterns
+
+        # Add URL filtering for faculty pages with diverse case patterns
         self.faculty_url_patterns = [
-            # Faculty and People
+            # Faculty and People (case-insensitive variations)
             "/faculty",
+            "/Faculty",
+            "/FACULTY",
             "/people",
+            "/People",
+            "/PEOPLE",
             "/members",
             "/staff",
             "/personnel",
             "/team",
-            
+
             # Role-based patterns
             "/role/faculty",
             "/role/faculty-cs",
@@ -134,7 +138,7 @@ class AcademicCrawler:
             "/role/faculty-aid",
             "/professors",
             "/instructors",
-            
+
             # Research Groups and Labs
             "/research",
             "/groups",
@@ -142,16 +146,19 @@ class AcademicCrawler:
             "/laboratory",
             "/group",
             "/lab",
-            
+
             # Directory and Organization
             "/directory",
+            "/Directory",
             "/department",
             "/about/people",
             "/about/faculty",
-            
-            # Common URL patterns
+
+            # Common URL patterns (case-insensitive)
             "faculty-directory",
             "faculty-profiles",
+            "faculty",
+            "Faculty",
             "research-groups",
             "research-areas",
             "principal-investigators",
@@ -164,6 +171,7 @@ class AcademicCrawler:
             "stanford.edu": ["/~", "/people/", "/profiles/"],
             "berkeley.edu": ["/~", "/users/", "/directory/"],
             "cmu.edu": ["/~", "/directory/", "/people/"],
+            "tsinghua.edu.cn": ["/info/", "/people/", "/faculty/"],
             # Add more for other universities
         }
         
@@ -248,6 +256,16 @@ class AcademicCrawler:
             self.session = aiohttp.ClientSession()
         # Initialize searx
         await self.searx.setup()
+
+        # Clear crawl4ai cache to ensure fresh crawl with new config
+        import os
+        cache_file = os.path.expanduser("~/.crawl4ai/crawl4ai.db")
+        if os.path.exists(cache_file):
+            try:
+                os.remove(cache_file)
+                logger.info("Cleared crawl4ai cache")
+            except Exception as e:
+                logger.warning(f"Could not clear crawl4ai cache: {e}")
 
     async def cleanup(self):
         """Cleanup resources"""
@@ -359,19 +377,21 @@ class AcademicCrawler:
     async def is_relevant_url(self, url: str) -> bool:
         """Check if URL is likely to contain faculty/researcher information"""
         url_lower = url.lower()
-        
-        # Check general patterns
-        if any(pattern in url_lower for pattern in self.faculty_url_patterns):
+
+        # Check general patterns (convert patterns to lowercase for matching)
+        patterns_lower = [p.lower() for p in self.faculty_url_patterns]
+        if any(pattern in url_lower for pattern in patterns_lower):
             return True
-            
+
         # Check domain-specific patterns
         parsed_url = urlparse(url_lower)
         domain = parsed_url.netloc
         for known_domain, patterns in self.domain_patterns.items():
             if known_domain in domain:
-                if any(pattern in url_lower for pattern in patterns):
+                patterns_lower = [p.lower() for p in patterns]
+                if any(pattern in url_lower for pattern in patterns_lower):
                     return True
-                
+
         return False
 
     async def get_seed_urls(self, school_name: str, department: str) -> Set[str]:
@@ -415,7 +435,7 @@ class AcademicCrawler:
             run_config = CrawlerRunConfig(
                 cache_mode=CacheMode.ENABLED,
                 session_id="academic_crawler",
-                excluded_tags=["script", "style", "nav", "footer"],
+                excluded_tags=["script", "style"],
                 keep_data_attributes=True,
                 check_robots_txt=True,  # Respect robots.txt
                 stream=True  # Enable streaming mode to get async iterator
@@ -449,12 +469,15 @@ class AcademicCrawler:
                             title=result.metadata.get('title', ''),
                             links=all_links
                         )
-                        
+
                         # Try to load from cache first
                         if not await self.load_from_cache(result.url):
                             # Cache the result if not already cached
                             await self.cache_page_content(page_content)
-                        
+
+                        # Add to crawled_content for entity extraction
+                        self.crawled_content.append(page_content)
+
                         results.append(page_content)
                     else:
                         logger.warning(f"Failed to crawl {result.url}: {result.error_message}")
@@ -536,18 +559,21 @@ class AcademicCrawler:
             
         # Collect URLs to crawl in parallel
         urls_to_crawl = {url}
-        
+
         # Crawl the initial URL and collect more URLs
         results = await self.batch_crawl_urls([url])
         if results:
             for page_content in results:
                 for link in page_content.links:
                     next_url = link["href"]
-                    if (self.is_same_domain(url, next_url) and 
-                        await self.is_relevant_url(next_url) and 
+                    if (self.is_same_domain(url, next_url) and
+                        await self.is_relevant_url(next_url) and
                         next_url not in self.visited_urls):
                         urls_to_crawl.add(next_url)
-        
+                        logger.debug(f"Discovered URL: {next_url}")
+
+        logger.info(f"Crawling {len(urls_to_crawl)} URLs at depth {depth}: {list(urls_to_crawl)[:5]}...")
+
         # Batch crawl collected URLs
         if depth < self.max_depth and urls_to_crawl:
             await self.batch_crawl_urls(list(urls_to_crawl))
@@ -1102,8 +1128,16 @@ class AcademicCrawler:
         # Initial crawl to find people
         seed_urls = {school.url}
         base_url = school.url.rstrip('/')
-        
-        for path in ['/people', '/faculty', '/directory']:
+
+        # Common path patterns to try (including case variations)
+        common_paths = [
+            '/people', '/People', '/PEOPLE',
+            '/faculty', '/Faculty', '/FACULTY',
+            '/directory', '/Directory',
+            '/members', '/staff'
+        ]
+
+        for path in common_paths:
             seed_urls.add(f"{base_url}{path}")
         
         self.visited_urls.clear()
