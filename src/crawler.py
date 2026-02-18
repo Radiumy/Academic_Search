@@ -588,16 +588,76 @@ class AcademicCrawler:
         except:
             return False
 
+    async def extract_faculty_links(self, html: str, base_url: str, keywords: List[str] = None) -> List[str]:
+        """从页面 HTML 中提取包含关键词的链接
+
+        Args:
+            html: 页面的原始 HTML
+            base_url: 用于解析相对链接的基准 URL
+            keywords: 可选的关键词列表，默认为类属性中的常见关键词
+
+        Returns:
+            包含关键词的链接列表
+        """
+        if keywords is None:
+            keywords = ['faculty', 'people', 'directory', 'members', 'staff', 'team']
+
+        soup = BeautifulSoup(html, 'html.parser')
+        links = []
+
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            text = a_tag.get_text(strip=True).lower()
+
+            # Skip empty hrefs or javascript links
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
+                continue
+
+            # 修复1：清理 href 中的空白字符
+            href = href.strip()
+
+            # 首先检查链接文本或 href 是否包含关键词
+            href_lower = href.lower()
+            text_lower = text.lower()
+            if not any(kw in href_lower or kw in text_lower for kw in keywords):
+                continue  # 不匹配关键词，跳过
+
+            # 匹配的链接，进行 URL 验证和转换
+            # 修复2：全面 URL 规范化，避免 crawl4ai 异常处理
+            absolute_url = urljoin(base_url, href)
+
+            # 验证 URL 格式是否有效
+            try:
+                parsed = urlparse(absolute_url)
+                # 确保 URL 有有效的 scheme 和 netloc
+                if not parsed.scheme or not parsed.netloc:
+                    logger.warning(f"无效 URL 格式: {absolute_url}")
+                    continue
+                # 检查 path 中是否有空格（可能导致 crawl4ai 截断）
+                if parsed.path and ' ' in parsed.path:
+                    logger.warning(f"URL path 包含空格: {absolute_url}")
+                    continue
+            except Exception as e:
+                logger.warning(f"URL 解析错误: {absolute_url}, {e}")
+                continue
+
+            links.append(absolute_url)
+
+        return list(set(links))  # 去重
+
     async def batch_extract_entities(self, contents: List[PageContent]) -> List[Person]:
         """Extract people information from multiple pages using GPT-4"""
         chunk_size = 5
         chunks = [contents[i:i + chunk_size] for i in range(0, len(contents), chunk_size)]
-        
+
         all_people = []
-        
+
         for chunk in chunks:
+            # Debug: show URLs in this chunk
+            logger.debug(f"Processing chunk with URLs: {[content.url for content in chunk]}")
+
             combined_text = "\n---\n".join([
-                f"URL: {content.url}\nTitle: {content.title}\n" + 
+                f"URL: {content.url}\nTitle: {content.title}\n" +
                 f"Links: {', '.join(link['href'] for link in content.links if 'mailto:' in link['href'])}\n" +
                 f"Content: {content.text[:2000]}"  # Include more content
                 for content in chunk
@@ -1120,44 +1180,66 @@ class AcademicCrawler:
         return person
 
     async def crawl_school(self, school: School) -> List[Person]:
-        """Modified to use improved person processing"""
+        """Modified to use improved person processing with root page extraction"""
         await self.setup()
-        
+
         logger.info(f"Starting crawl for {school.name} (Tier {school.tier}) - {school.department}")
-        
-        # Initial crawl to find people
-        seed_urls = {school.url}
+
         base_url = school.url.rstrip('/')
 
-        # Common path patterns to try (including case variations)
-        common_paths = [
-            '/people', '/People', '/PEOPLE',
-            '/faculty', '/Faculty', '/FACULTY',
-            '/directory', '/Directory',
-            '/members', '/staff'
-        ]
+        # Get keywords from school config or use defaults
+        keywords = school.keywords if hasattr(school, 'keywords') else ['faculty', 'people', 'directory', 'members', 'staff', 'team']
 
-        for path in common_paths:
-            seed_urls.add(f"{base_url}{path}")
-        
         self.visited_urls.clear()
         self.crawled_content.clear()
-        
-        # Process seeds in batches
-        for url in seed_urls:
-            await self.crawl_site(url)
-        
+
+        # Step 1: Crawl the root page first
+        logger.info(f"Crawling root page: {school.url}")
+        root_results = await self.batch_crawl_urls([school.url])
+
+        # Step 2: Extract faculty links from root page
+        faculty_links = []
+        if root_results and root_results[0].html:
+            logger.info(f"Extracting faculty links from root page...")
+            faculty_links = await self.extract_faculty_links(
+                root_results[0].html,
+                school.url,
+                keywords
+            )
+            logger.info(f"Found {len(faculty_links)} candidate links from root page: {faculty_links[:5]}...")
+
+        # Step 3: If no links found from root page, fall back to common paths
+        if not faculty_links:
+            logger.info("No links found from root page, falling back to common paths...")
+            common_paths = [
+                '/people', '/People', '/PEOPLE',
+                '/faculty', '/Faculty', '/FACULTY',
+                '/directory', '/Directory',
+                '/members', '/staff'
+            ]
+            for path in common_paths:
+                faculty_links.append(f"{base_url}{path}")
+            logger.info(f"Using {len(faculty_links)} fallback paths")
+
+        # Step 4: Crawl the discovered faculty links
+        all_urls = list(set(faculty_links))
+        logger.info(f"Crawling {len(all_urls)} faculty/people pages...")
+        results = await self.batch_crawl_urls(all_urls)
+
+        # Add results to crawled_content
+        self.crawled_content.extend(results)
+
         # Extract people from crawled content
         people = await self.batch_extract_entities(self.crawled_content)
         unique_people = self.deduplicate_people(people)
-        
+
         # Process each person
         processed_people = []
         for person in tqdm.tqdm(unique_people, desc="Processing people"):
             processed_person = await self.process_person(person, school)
             processed_people.append(processed_person)
             await asyncio.sleep(random.uniform(1, 3))  # Prevent rate limiting
-        
+
         await self.cleanup()
         return processed_people
 
