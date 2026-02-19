@@ -55,14 +55,6 @@ class DFSCrawler:
         # Setup logging
         self.logger = logging.getLogger("DFSCrawler")
         self.logger.setLevel(logging.DEBUG if verbose else logging.INFO)
-        
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter(
-                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-            )
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
 
         # Store configuration
         self.config = {

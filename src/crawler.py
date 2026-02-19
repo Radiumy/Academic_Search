@@ -26,15 +26,8 @@ from src.test_searchxng import SearchXNGTester
 from crawl4ai.async_dispatcher import MemoryAdaptiveDispatcher, RateLimiter
 from crawl4ai import CrawlerMonitor, DisplayMode
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('crawler.log'),
-        logging.StreamHandler()
-    ]
-)
+from src.logging_config import configure_logging
+configure_logging()
 logger = logging.getLogger(__name__)
 
 class ScholarProfile(BaseModel):
@@ -407,7 +400,7 @@ class AcademicCrawler:
                         url=search_url,
                         config=CrawlerRunConfig(
                             wait_for="css:#search",
-                            cache_mode=CacheMode.ENABLED  # Enable caching
+                            cache_mode=CacheMode.BYPASS  # Bypass cache to avoid schema issues
                         )
                     )
                     
@@ -433,7 +426,7 @@ class AcademicCrawler:
         
         async with AsyncWebCrawler(config=self.browser_config) as crawler:
             run_config = CrawlerRunConfig(
-                cache_mode=CacheMode.ENABLED,
+                cache_mode=CacheMode.BYPASS,  # Bypass cache to avoid schema issues
                 session_id="academic_crawler",
                 excluded_tags=["script", "style"],
                 keep_data_attributes=True,
@@ -1146,16 +1139,16 @@ class AcademicCrawler:
     def save_person_profile(self, person: Person, school: School) -> None:
         """Save person profile with smart merging"""
         # Create school directory
-        school_dir = self.profiles_dir / school.name.lower().replace(' ', '_')
+        school_dir = self.profiles_dir / school.code.lower()
         school_dir.mkdir(exist_ok=True)
-        
+
         # Generate filename from person's name
         safe_name = re.sub(r'[^\w\s-]', '', person.name.lower()).replace(' ', '_')
         profile_path = school_dir / f"{safe_name}.json"
-        
+
         # Convert person to dict
         new_data = person.model_dump()
-        
+
         # If profile exists, merge with existing data
         if profile_path.exists():
             try:
@@ -1308,9 +1301,9 @@ class AcademicCrawler:
                 updated_person.last_updated = datetime.now().isoformat()
                 
                 # Save to data directory
-                save_dir = self.profiles_dir / school.name.lower().replace(' ', '_')
+                save_dir = self.profiles_dir / school.code.lower()
                 save_dir.mkdir(exist_ok=True)
-                
+
                 save_path = save_dir / f"{person.name.lower().replace(' ', '_')}.json"
                 with open(save_path, 'w') as f:
                     json.dump(updated_person.model_dump(), f, indent=2)

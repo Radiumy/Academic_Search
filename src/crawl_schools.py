@@ -11,17 +11,9 @@ import os
 
 def setup_logging(name='SchoolCrawler'):
     """Setup logging configuration"""
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(processName)s - %(name)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.StreamHandler(),
-                logging.FileHandler(f'crawler_{name}_{os.getpid()}.log')
-            ]
-        )
-    return logger
+    from src.logging_config import configure_logging
+    configure_logging()
+    return logging.getLogger(name)
 
 def crawl_school(school_name: str, urls: List[str], cache_dir: str, output_dir: str, result_queue: multiprocessing.Queue):
     """Crawl a single school's URLs and aggregate results in a separate process."""

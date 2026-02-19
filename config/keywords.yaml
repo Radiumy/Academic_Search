@@ -14,6 +14,9 @@ positive:
   - jz
   - ry
   - dw
+  - szzk
+  - jzgml
+  - jcrc
   # Chinese pinyin full words
   - shizi
   - shiziduiwu
@@ -23,6 +26,7 @@ positive:
   - duiwu
   # Full Chinese keywords
   - 师资
+  - 师资状况
   - 师资队伍
   - 教师
   - 教职
@@ -30,6 +34,7 @@ positive:
   - 队伍
   - 教员
   - 教职工
+  - 教职工名录
 
 # Negative keywords - 用于排除非目标页面
 negative:
