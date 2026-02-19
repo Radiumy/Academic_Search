@@ -3,6 +3,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, List
 import json
+import argparse
 from dfs_worker import DFSCrawler
 import logging
 import multiprocessing
@@ -163,4 +164,17 @@ def main():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()  # For Windows compatibility
+    parser = argparse.ArgumentParser(description="Crawl school faculty pages")
+    parser.add_argument(
+        '--keywords', '-k',
+        type=str,
+        default=None,
+        help='Path to keywords YAML file (default: config/keywords.yaml)'
+    )
+    args = parser.parse_args()
+
+    # Store keywords path in environment so subprocesses can access it
+    if args.keywords:
+        os.environ['CRAWLER_KEYWORDS_PATH'] = args.keywords
+
     main() 

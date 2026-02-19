@@ -17,7 +17,7 @@ import tqdm
 from datetime import datetime
 import random
 import time
-from src.config import School  # Add this line near other imports
+from src.config import School, Keywords  # Add this line near other imports
 import pickle
 from pathlib import Path
 from flair.data import Sentence
@@ -218,8 +218,8 @@ class AcademicCrawler:
         self.queries_cache.mkdir(exist_ok=True)
         self.pages_cache.mkdir(exist_ok=True)
 
-        # Load NER model
-        self.ner_tagger = SequenceTagger.load('flair/ner-english-large')
+        # NER model - lazy loaded on first use
+        self.ner_tagger = None
         
         # Search configuration
         self.search_base_url = "https://opnxng.com/search"
@@ -244,7 +244,7 @@ class AcademicCrawler:
                 rate_limit_codes=[429, 503, 504, 403]  # Added 403 for forbidden
             ),
             monitor=CrawlerMonitor(
-                enable_ui=True,
+                enable_ui=False,
                 max_width=120
             )
         )
@@ -335,7 +335,7 @@ class AcademicCrawler:
                 domain = parsed.netloc.replace('.', '_')
                 path = re.sub(r'[^\w\-_.]', '_', parsed.path)
                 key = f"{domain}{path}"
-            except:
+            except Exception:
                 pass
                 
         return key.strip('_')
@@ -452,9 +452,25 @@ class AcademicCrawler:
                 # Process results as they come in
                 async for result in async_results:
                     if result.success:
-                        # Process successful result
-                        soup = BeautifulSoup(result.cleaned_html or result.html, 'html.parser')
-                        cleaned_text = soup.get_text(separator=' ', strip=True)
+                        # Process successful result - use raw HTML to preserve table content
+                        soup = BeautifulSoup(result.html, 'html.parser')
+
+                        # Try multiple text extraction methods to handle complex table layouts
+                        # First try extracting from tables specifically
+                        table_texts = []
+                        for table in soup.find_all('table'):
+                            table_texts.append(table.get_text(separator=' ', strip=True))
+                        table_text = ' '.join(table_texts)
+
+                        # Also get general text
+                        general_text = soup.get_text(separator=' ', strip=True)
+
+                        # Use table_text if it has meaningful content (contains names or titles)
+                        # Otherwise use general text
+                        if '博导' in table_text or '教授' in table_text or '院士' in table_text:
+                            cleaned_text = table_text
+                        else:
+                            cleaned_text = general_text
                         
                         # Extract links
                         all_links = []
@@ -588,26 +604,35 @@ class AcademicCrawler:
         except:
             return False
 
-    async def extract_faculty_links(self, html: str, base_url: str, keywords: List[str] = None) -> List[str]:
-        """从页面 HTML 中提取包含关键词的链接
+    async def extract_faculty_links(self, html: str, base_url: str, keywords=None) -> List[str]:
+        """从页面 HTML 中提取包含关键词的链接，并排除匹配 negative keywords 的链接
 
         Args:
             html: 页面的原始 HTML
             base_url: 用于解析相对链接的基准 URL
-            keywords: 可选的关键词列表，默认为类属性中的常见关键词
+            keywords: Keywords 对象、positive 关键词列表、或 None（使用默认配置）
 
         Returns:
             包含关键词的链接列表
         """
-        if keywords is None:
-            keywords = ['faculty', 'people', 'directory', 'members', 'staff', 'team']
+        if isinstance(keywords, Keywords):
+            positive = keywords.positive
+            negative = keywords.negative
+        elif isinstance(keywords, list):
+            positive = keywords
+            negative = []
+        else:
+            kw_obj = Keywords()
+            positive = kw_obj.positive
+            negative = kw_obj.negative
 
         soup = BeautifulSoup(html, 'html.parser')
         links = []
 
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href']
-            text = a_tag.get_text(strip=True).lower()
+            # 获取链接文本，保留中文用于匹配
+            text = a_tag.get_text(strip=True)
 
             # Skip empty hrefs or javascript links
             if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
@@ -617,10 +642,50 @@ class AcademicCrawler:
             href = href.strip()
 
             # 首先检查链接文本或 href 是否包含关键词
+            # 对 href 进行小写匹配（英文）
             href_lower = href.lower()
+
+            # 对文本进行小写匹配（英文）和原文匹配（中文）
             text_lower = text.lower()
-            if not any(kw in href_lower or kw in text_lower for kw in keywords):
-                continue  # 不匹配关键词，跳过
+            text_pure = text  # 保留原文用于中文匹配
+
+            # 检查是否匹配 positive 关键词
+            matched = False
+            for kw in positive:
+                # 对于英文关键词，使用小写匹配
+                if kw.isascii():
+                    kw_lower = kw.lower()
+                    if kw_lower in href_lower:
+                        matched = True
+                        break
+                    if kw_lower in text_lower:
+                        matched = True
+                        break
+                else:
+                    # 对于中文关键词，直接在原文文本中匹配
+                    if kw in text_pure:
+                        matched = True
+                        break
+
+            if not matched:
+                continue  # 不匹配 positive 关键词，跳过
+
+            # 检查是否匹配 negative 关键词（URL 路径或链接文本任一匹配即排除）
+            excluded = False
+            for nkw in negative:
+                if nkw.isascii():
+                    nkw_lower = nkw.lower()
+                    if nkw_lower in href_lower or nkw_lower in text_lower:
+                        excluded = True
+                        break
+                else:
+                    if nkw in text_pure or nkw in href:
+                        excluded = True
+                        break
+
+            if excluded:
+                logger.debug(f"Excluded by negative keyword: {href} ({text})")
+                continue
 
             # 匹配的链接，进行 URL 验证和转换
             # 修复2：全面 URL 规范化，避免 crawl4ai 异常处理
@@ -645,6 +710,56 @@ class AcademicCrawler:
 
         return list(set(links))  # 去重
 
+    async def extract_detail_page_links(self, html: str, base_url: str) -> List[str]:
+        """从栏目页面提取每个人的详情页链接"""
+        soup = BeautifulSoup(html, 'html.parser')
+        links = []
+
+        # 详情页链接匹配模式
+        detail_patterns = [
+            r'pagem?\.htm',      # pagem.htm, page.htm
+            r'personm?\.htm',    # personm.htm, person.htm
+            r'/c\d+',            # 包含 /c 加上数字的路径
+            r'detail',           # detail 关键词
+            r'profile',          # profile 关键词
+        ]
+
+        # 排除模式
+        exclude_patterns = [
+            r'listm\.htm$',      # 栏目主页
+            r'index\.htm$',      # 索引页
+        ]
+
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag.get('href', '')
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:', '#')):
+                continue
+
+            # 检查是否匹配详情页模式
+            is_detail = any(re.search(p, href, re.IGNORECASE) for p in detail_patterns)
+            if not is_detail:
+                continue
+
+            # 检查是否应排除
+            should_exclude = any(re.search(p, href, re.IGNORECASE) for p in exclude_patterns)
+            if should_exclude:
+                continue
+
+            # 转换为绝对 URL
+            absolute_url = urljoin(base_url, href)
+
+            # URL 验证
+            try:
+                parsed = urlparse(absolute_url)
+                if not parsed.scheme or not parsed.netloc:
+                    continue
+            except Exception:
+                continue
+
+            links.append(absolute_url)
+
+        return list(set(links))
+
     async def batch_extract_entities(self, contents: List[PageContent]) -> List[Person]:
         """Extract people information from multiple pages using GPT-4"""
         chunk_size = 5
@@ -655,6 +770,13 @@ class AcademicCrawler:
         for chunk in chunks:
             # Debug: show URLs in this chunk
             logger.debug(f"Processing chunk with URLs: {[content.url for content in chunk]}")
+
+            # Debug: show text length for each page
+            for content in chunk:
+                logger.debug(f"=== DEBUG: Page {content.url}")
+                logger.debug(f"=== DEBUG: Title: {content.title}")
+                logger.debug(f"=== DEBUG: Text length: {len(content.text)}")
+                logger.debug(f"=== DEBUG: Text preview: {content.text[:500]}")
 
             combined_text = "\n---\n".join([
                 f"URL: {content.url}\nTitle: {content.title}\n" +
@@ -735,23 +857,40 @@ class AcademicCrawler:
         return all_people
 
     def deduplicate_people(self, people: List[Person]) -> List[Person]:
-        """Deduplicate people based on name and affiliation similarity"""
-        unique_people = []
-        seen_names = set()
-        
+        """Deduplicate people based on name and merge information from duplicates"""
+        unique_people_dict: Dict[str, Person] = {}
+
         for person in people:
             normalized_name = re.sub(r'[^\w\s]', '', person.name.lower())
-            if normalized_name not in seen_names:
-                seen_names.add(normalized_name)
-                unique_people.append(person)
+            if normalized_name not in unique_people_dict:
+                unique_people_dict[normalized_name] = person
             else:
-                # Merge information if this is the same person
-                for existing in unique_people:
-                    if re.sub(r'[^\w\s]', '', existing.name.lower()) == normalized_name:
-                        existing.related_pages.extend(person.related_pages)
-                        # Merge other fields as needed
-        
-        return unique_people
+                # Merge information from duplicate person
+                existing = unique_people_dict[normalized_name]
+                # Merge lists (deduplicate)
+                if person.related_pages:
+                    existing.related_pages = list(set(existing.related_pages + person.related_pages))
+                if person.research_interests:
+                    existing.research_interests = list(set(existing.research_interests + person.research_interests))
+                if person.papers:
+                    existing.papers = list(set(existing.papers + person.papers))
+                # Merge string fields (keep longer non-empty value)
+                for field, new_val in [
+                    ('email', person.email),
+                    ('personal_page', person.personal_page),
+                    ('group_page', person.group_page),
+                    ('google_scholar', person.google_scholar),
+                ]:
+                    if new_val and (
+                        not getattr(existing, field) or
+                        len(new_val) > len(getattr(existing, field))
+                    ):
+                        setattr(existing, field, new_val)
+                # Merge numeric fields (keep larger value)
+                if person.citations > existing.citations:
+                    existing.citations = person.citations
+
+        return list(unique_people_dict.values())
 
     async def find_scholar_profile(self, person: Person) -> Optional[ScholarProfile]:
         """Find Scholar profile with caching"""
@@ -803,6 +942,11 @@ class AcademicCrawler:
 
     async def extract_people_mentions(self, text: str, context_window: int = 200) -> List[PersonMention]:
         """Extract people mentions using Flair NER"""
+        # Lazy load NER model on first use
+        if self.ner_tagger is None:
+            logger.info("Loading NER model (first use)...")
+            self.ner_tagger = SequenceTagger.load('flair/ner-english-large')
+
         sentence = Sentence(text)
         self.ner_tagger.predict(sentence)
         
@@ -1179,7 +1323,7 @@ class AcademicCrawler:
         
         return person
 
-    async def crawl_school(self, school: School) -> List[Person]:
+    async def crawl_school(self, school: School, keywords: Keywords = None) -> List[Person]:
         """Modified to use improved person processing with root page extraction"""
         await self.setup()
 
@@ -1187,8 +1331,13 @@ class AcademicCrawler:
 
         base_url = school.url.rstrip('/')
 
-        # Get keywords from school config or use defaults
-        keywords = school.keywords if hasattr(school, 'keywords') else ['faculty', 'people', 'directory', 'members', 'staff', 'team']
+        # Use per-school keywords override, or the provided Keywords object, or defaults
+        if school.keywords is not None:
+            kw_for_extract = school.keywords
+        elif keywords is not None:
+            kw_for_extract = keywords
+        else:
+            kw_for_extract = Keywords()
 
         self.visited_urls.clear()
         self.crawled_content.clear()
@@ -1204,32 +1353,53 @@ class AcademicCrawler:
             faculty_links = await self.extract_faculty_links(
                 root_results[0].html,
                 school.url,
-                keywords
+                kw_for_extract
             )
             logger.info(f"Found {len(faculty_links)} candidate links from root page: {faculty_links[:5]}...")
 
-        # Step 3: If no links found from root page, fall back to common paths
+        # Step 3: 如果从根页面没有找到链接，不使用直接拼接方案，而是跳过
+        # # Step 3: If no links found from root page, fall back to common paths
+        # if not faculty_links:
+        #     logger.info("No links found from root page, falling back to common paths...")
+        #     common_paths = [
+        #         '/people', '/People', '/PEOPLE',
+        #         '/faculty', '/Faculty', '/FACULTY',
+        #         '/directory', '/Directory',
+        #         '/members', '/staff'
+        #     ]
+        #     for path in common_paths:
+        #         faculty_links.append(f"{base_url}{path}")
+        #     logger.info(f"Using {len(faculty_links)} fallback paths")
+
+        # 如果仍然没有找到链接，记录警告但继续执行
         if not faculty_links:
-            logger.info("No links found from root page, falling back to common paths...")
-            common_paths = [
-                '/people', '/People', '/PEOPLE',
-                '/faculty', '/Faculty', '/FACULTY',
-                '/directory', '/Directory',
-                '/members', '/staff'
-            ]
-            for path in common_paths:
-                faculty_links.append(f"{base_url}{path}")
-            logger.info(f"Using {len(faculty_links)} fallback paths")
+            logger.warning("No faculty links found from root page!")
 
-        # Step 4: Crawl the discovered faculty links
-        all_urls = list(set(faculty_links))
-        logger.info(f"Crawling {len(all_urls)} faculty/people pages...")
-        results = await self.batch_crawl_urls(all_urls)
+        # Step 4: Crawl the discovered faculty links (category pages)
+        category_urls = list(set(faculty_links))
+        logger.info(f"Crawling {len(category_urls)} faculty/people pages...")
+        category_results = await self.batch_crawl_urls(category_urls)
 
-        # Add results to crawled_content
-        self.crawled_content.extend(results)
+        # Add category results to crawled_content
+        self.crawled_content.extend(category_results)
 
-        # Extract people from crawled content
+        # Step 5: Extract detail page links from category pages
+        all_detail_urls = set()
+        for result in category_results:
+            if result.html:
+                detail_links = await self.extract_detail_page_links(result.html, result.url)
+                all_detail_urls.update(detail_links)
+                logger.info(f"从 {result.url} 提取到 {len(detail_links)} 个详情页链接")
+
+        # Step 6: Crawl detail pages
+        if all_detail_urls:
+            detail_results = await self.batch_crawl_urls(list(all_detail_urls))
+            self.crawled_content.extend(detail_results)
+            logger.info(f"Crawled {len(detail_results)} detail pages")
+        else:
+            logger.warning("未找到详情页链接，退回到使用栏目页内容")
+
+        # Step 7: Extract people from crawled content
         people = await self.batch_extract_entities(self.crawled_content)
         unique_people = self.deduplicate_people(people)
 

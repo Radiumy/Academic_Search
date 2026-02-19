@@ -1,0 +1,50 @@
+# Positive keywords - 用于匹配 faculty/people 页面
+positive:
+  # English keywords
+  - faculty
+  - people
+  - directory
+  - members
+  - staff
+  - team
+  # Chinese pinyin abbreviations
+  - sz
+  - szdw
+  - js
+  - jz
+  - ry
+  - dw
+  # Chinese pinyin full words
+  - shizi
+  - shiziduiwu
+  - jiaoshi
+  - jiaozhi
+  - renyuan
+  - duiwu
+  # Full Chinese keywords
+  - 师资
+  - 师资队伍
+  - 教师
+  - 教职
+  - 研究人员
+  - 队伍
+  - 教员
+  - 教职工
+
+# Negative keywords - 用于排除非目标页面
+negative:
+  - student
+  - students
+  - alumnus
+  - alumni
+  - graduate
+  - employment
+  - career
+  - job
+  - internship
+  - admission
+  - recruit
+  - hire
+  - vacancy
+  - 退休
+  - 行政
