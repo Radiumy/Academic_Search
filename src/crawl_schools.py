@@ -43,6 +43,33 @@ def crawl_school(school_name: str, urls: List[str], cache_dir: str, output_dir: 
                 "contact", "terms", "privacy", "award", "library",
                 "hospital", "lectures", "login", "signup", "register",
                 "forgot", "reset", "admin",
+
+                # Announcements, notices, bulletins - 公告通知类
+                "announcement", "announcements",
+                "notice", "notices",
+                "bulletin",
+                "press-release", "press-releases",
+                "headline", "headlines",
+                "update", "updates",
+
+                # Academic news and events - 学术新闻活动
+                "seminar", "workshop", "conference", "symposium",
+                "colloquium", "lecture", "talk", "speech",
+                "academic-event", "academic-events",
+
+                # Recruitment and hiring - 招聘相关
+                "recruitment", "hiring", "vacancy", "vacancies",
+                "postdoc", "postdoctoral", "postdocs",
+                "position", "positions", "opening", "openings",
+
+                # Awards and honors - 奖项荣誉
+                "honor", "honors", "achievement", "achievements",
+                "recognition", "recognition", "prize", "prizes",
+
+                # Student related - 学生相关
+                "undergraduate", "graduate", "phd", "master",
+                "student", "students", "alumnus", "alumni",
+                "admission", "admissions", "enrollment",
                 
                 # Additional filters for non-faculty content
                 "undergraduate",
@@ -62,7 +89,17 @@ def crawl_school(school_name: str, urls: List[str], cache_dir: str, output_dir: 
                 "api", "feed", "sitemap", "robots", "wp-",
                 "search", "filter", "sort", "tag", "category",
                 "page", "index", "list", "archive", "browse",
-                "nih", "arxiv", "pubmed", "pubmedcentral", "ncbi", "doi.org", "doi", "forms", "bit.ly", "orcid", "dblp", "linkedin"
+                "nih", "arxiv", "pubmed", "pubmedcentral", "ncbi", "doi.org", "doi", "forms", "bit.ly", "orcid", "dblp", "linkedin",
+
+                # Chinese keywords - 中文关键词
+                "公告", "通知", "新闻", "动态", "动态信息",
+                "招聘", "引进", "人才", "录用",
+                "获奖", "荣誉", "表彰", "成果",
+                "会议", "学术会议", "研讨会", "报告会",
+                "本科生", "研究生", "博士", "硕士",
+                "招生", "录取", "调剂", "推免",
+                "校友", "毕业生", "就业",
+                "简介", "代表", "人物",
                 # Query parameters to skip
                 r"[?&]utm_", r"[?&]source=", r"[?&]ref=", r"[?&]medium=",
                 r"[?&]campaign=", r"[?&]term=", r"[?&]content=",

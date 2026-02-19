@@ -1,0 +1,151 @@
+# config/url_patterns.yaml
+
+# ============================================
+# 1. 栏目页匹配模式（从根页面提取 faculty/people 列表页）
+# ============================================
+category_patterns:
+  # 英文模式
+  - "/faculty"
+  - "/people"
+  - "/members"
+  - "/staff"
+  - "/personnel"
+  - "/team"
+  - "/directory"
+  - "/department"
+
+  # 中文拼音模式
+  - "szdw"
+  - "szzk"
+
+# ============================================
+# 2. 详情页匹配模式（从栏目页提取个人主页）
+# ============================================
+profile_patterns:
+  # 中文网站常用模式
+  - "/teacher/"
+  - "/faculty/"
+  - "/people/"
+  - "/member/"
+  - "/person/"
+  - "/info/"
+  - "/c\\d+"                    # /c123/xxx
+
+  # 英文网站常用模式
+  - "/~[\\w]+"                  # ~username
+  - "/user/"
+  - "/profile/"
+  - "\\?.*id="                  # ?id=xxx
+  - "\\?.*uid="
+
+  # 南京大学计算机系特殊格式 /xx/xx/cxxxxaxxxx/page.htm
+  - "/c[0-9a-f]+a[0-9]+/"      # /c2639a153642/
+  - "/c[0-9a-f]+/"             # /c9/ 或 /c2639/
+
+# 详情页正则模式（用于更精确的匹配）
+profile_regex_patterns:
+  # 页面类型标识
+  - "pagem?\\.htm"      # pagem.htm, page.htm (常用人物页面)
+  - "personm?\\.htm"    # personm.htm, person.htm
+  - "page\\.htm$"       # page.htm 结尾
+
+# ============================================
+# 3. 排除模式（用于排除无关页面）
+# ============================================
+exclude_patterns:
+  # 新闻/公告
+  - "/news/"
+  - "/news-"
+  - "/announcement"
+  - "/notice"
+  - "/bulletin"
+  - "/press/"
+  - "/blog/"
+  - "/article/"
+  - "/events/"
+  - "/event/"
+
+  # 成果展示
+  - "/paper/"
+  - "/publication/"
+  - "/patent/"
+  - "/project/"
+  - "/award/"
+  - "/achievement/"
+
+  # 教学/课程
+  - "/course/"
+  - "/teaching/"
+  - "/education/"
+
+  # 招聘/招生
+  - "/recruit/"
+  - "/admission/"
+  - "/hiring/"
+  - "/career/"
+
+  # 学生相关
+  - "/student/"
+  - "/alumni/"
+  - "/graduate/"
+
+  # 其他排除
+  - "/detail\\.htm"
+  - "news\\."
+  - "notice\\."
+  - "listm\\.htm$"
+  - "index\\.htm$"
+
+  # 中文排除
+  - "/xw/"
+  - "/tz/"
+  - "/gg/"
+  - "/zx/"
+  - "/dt/"
+  - "/xinwen/"
+  - "/gonggao/"
+  - "/tongzhi/"
+  - "/huodong/"
+  - "/lunwen/"
+
+# ============================================
+# 4. URL 路径深度限制
+# ============================================
+url_constraints:
+  max_path_depth: 4              # 最大路径深度
+  allowed_roots:                 # 允许的根路径
+    - "faculty"
+    - "people"
+    - "teacher"
+    - "member"
+    - "staff"
+    - "directory"
+    - "info"
+    - "about"
+    - "users"
+
+# ============================================
+# 5. LLM 提取配置
+# ============================================
+llm_extraction:
+  # 只提取个人信息字段，不采集成果
+  include_fields:
+    - name
+    - title
+    - email
+    - office
+    - phone
+    - research_area
+    - education
+    - degree
+    - advisor
+
+  exclude_fields:
+    - papers
+    - publications
+    - patents
+    - projects
+    - awards
+    - courses
+    - students
+    - achievements

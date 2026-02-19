@@ -1,0 +1,196 @@
+# config/anti_crawler.yaml
+# 反爬虫隐藏配置文件
+
+# ============================================
+# 1. 浏览器指纹伪装配置
+# ============================================
+stealth:
+  # 启用浏览器指纹伪装 (使用 playwright-stealth)
+  # 这是最重要的反检测选项，会自动修改浏览器指纹
+  enabled: true
+
+  # User-Agent 配置
+  user_agent:
+    # 模式: "random"=随机生成, "custom"=使用自定义池
+    mode: "random"
+    # 自定义 User-Agent 池 (当 mode 为 custom 时使用)
+    # 如果不设置，将使用 crawl4ai 内置的 UA 池
+    custom_pool:
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15"
+      - "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0"
+      - "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+      - "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+
+# ============================================
+# 2. 浏览器上下文配置
+# ============================================
+browser_context:
+  # 随机化语言设置
+  # "random" 随机或指定如 "en-US,zh-CN"
+  locale: "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7"
+
+  # 随机化时区
+  # "random" 随机或指定如 "America/New_York"
+  timezone_id: "America/New_York"
+
+  # 随机化地理坐标 (用于某些网站的地理位置检测)
+  geolocation:
+    enabled: false  # 谨慎使用，可能影响某些网站
+    latitude: 40.7128
+    longitude: -74.0060
+
+  # 视口大小 (可以随机化)
+  viewport:
+    width: 1920
+    height: 1080
+
+  # 权限列表 (可以模拟真实用户权限)
+  permissions: ["geolocation", "notifications"]
+
+  # 页面加载超时 (毫秒)
+  page_timeout: 60000
+
+  # 等待元素加载
+  wait_for: "body"
+
+  # 返回 HTML 前额外等待秒数
+  delay_before_return_html: 2
+
+# ============================================
+# 3. HTTP 请求头配置
+# ============================================
+headers:
+  # 随机 Accept 请求头
+  accept:
+    - "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+    - "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    - "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+
+  # 随机 Accept-Language
+  accept_language:
+    - "en-US,en;q=0.9"
+    - "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7"
+    - "en-GB,en;q=0.9"
+
+  # 随机 Accept-Encoding
+  accept_encoding:
+    - "gzip, deflate, br"
+    - "gzip, deflate"
+
+  # Sec-CH-UA 头 (浏览器特性头)
+  sec_ch_ua:
+    - '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
+    - '"Not_A Brand";v="8", "Chromium";v="119", "Google Chrome";v="119"'
+    - '"Not_A Brand";v="8", "Chromium";v="121", "Google Chrome";v="121"'
+
+# ============================================
+# 4. 请求速率控制
+# ============================================
+rate_limiting:
+  # 请求间隔范围（秒）[最小, 最大]
+  delay_range: [2, 5]
+
+  # 随机抖动（秒）- 防止固定间隔被检测
+  jitter_range: [0.5, 1.5]
+
+  # 长爬取后增加间隔 (秒)
+  # 防止长时间运行被检测为机器人
+  long_run_delay_increase: 0.5
+
+  # 每N个请求后增加间隔
+  increase_every: 30
+
+  # 每日请求上限 (可选)
+  daily_limit: 0  # 0 表示不限制
+
+# ============================================
+# 5. 代理配置（可选）
+# ============================================
+proxy:
+  enabled: false
+
+  # 代理服务器列表（支持轮换）
+  servers:
+    # - "http://proxy1:8080"
+    # - "http://proxy2:8080"
+
+  # 认证信息
+  username: ""
+  password: ""
+
+  # 代理轮换策略: "random" | "round_robin"
+  rotation_strategy: "random"
+
+# ============================================
+# 6. 额外的浏览器启动参数
+# ============================================
+extra_args:
+  # 禁用自动化检测
+  - "--disable-blink-features=AutomationControlled"
+
+  # 禁用开发工具提示
+  - "--disable-dev-shm-usage"
+
+  # 沙盒模式 (Linux 需要)
+  - "--no-sandbox"
+
+  # 禁用 GPU 加速 (某些环境需要)
+  # - "--disable-gpu"
+
+  # 禁用自动化扩展
+  - "--disable-extensions"
+
+# ============================================
+# 7. JavaScript 反检测脚本
+# ============================================
+init_scripts:
+  # 覆盖 navigator.webdriver 属性
+  - |
+    Object.defineProperty(navigator, 'webdriver', {
+      get: () => undefined
+    });
+
+  # 覆盖 chrome.runtime 对象
+  - |
+    if (window.chrome) {
+      window.chrome.runtime = {
+        connect: function() {},
+        sendMessage: function() {}
+      };
+    }
+
+  # 模拟插件
+  - |
+    Object.defineProperty(navigator, 'plugins', {
+      get: () => [1, 2, 3, 4, 5]
+    });
+
+  # 模拟languages
+  - |
+    Object.defineProperty(navigator, 'languages', {
+      get: () => ['en-US', 'en']
+    });
+
+# ============================================
+# 8. 目标网站特殊处理
+# ============================================
+site_specific:
+  # 针对特定网站的配置
+  # 例如：某些网站需要特定的 cookie 或 headers
+  # example.com:
+  #   cookies:
+  #     - name: "session_id"
+  #       value: "xxx"
+  #       domain: "example.com"
+  #   headers:
+  #     X-Custom-Header: "value"
+
+  # Google 学术搜索特殊配置
+  scholar.google.com:
+    delay_range: [3, 7]  # 学术搜索需要更长的间隔
+    extra_args:
+      - "--disable-blink-features=AutomationControlled"
