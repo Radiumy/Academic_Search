@@ -1,0 +1,45 @@
+# .github/workflows/trigger-parent-update.yml (位于 crawler 仓库)
+name: Trigger Parent Update
+
+on:
+  # 当 master/main 分支有推送时触发
+  push:
+    branches:
+      - master
+      - main
+  # 也支持手动触发
+  workflow_dispatch:
+
+jobs:
+  notify-parent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger parent repository
+        run: |
+          # 主仓库的 owner 和名称
+          PARENT_OWNER="sihan-shen"
+          PARENT_REPO="Academic-Info-Main"
+
+          # 获取触发本次更新的 commit SHA
+          COMMIT_SHA="${{ github.sha }}"
+
+          # 使用 PAT 触发主仓库的 repository_dispatch
+          # 需要在 crawler 仓库的 Secrets 中添加 PAT (需要有主仓库的 repo 权限)
+          curl -X POST \
+            "https://api.github.com/repos/${PARENT_OWNER}/${PARENT_REPO}/dispatches" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token ${{ secrets.PARENT_REPO_PAT }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event_type": "submodule_updated",
+              "client_payload": {
+                "submodule": "crawler",
+                "commit_sha": "'"$COMMIT_SHA"'"
+              }
+            }'
+
+      - name: Print trigger info
+        run: |
+          echo "Successfully triggered parent repository update"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
