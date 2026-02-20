@@ -15,6 +15,7 @@ torch==2.5.1               # PyTorch (required by flair)
 numpy==2.2.2               # Numerical computing (required by qdrant-client and vector operations)
 qdrant-client==1.16.2      # Vector database client for storing embeddings
 playwright==1.58.0
+pypinyin==0.53.0           # Chinese pinyin conversion library
 # Optional development dependencies
 # pytest==8.3.4            # Testing framework
 # pytest-asyncio==0.25.2   # Async test support

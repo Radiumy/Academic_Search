@@ -26,17 +26,18 @@ from crawl4ai.async_dispatcher import MemoryAdaptiveDispatcher, RateLimiter
 from crawl4ai import CrawlerMonitor, DisplayMode
 
 from src.logging_config import configure_logging
+from src.pinyin_utils import generate_search_variants
 configure_logging()
 logger = logging.getLogger(__name__)
 
 class ScholarProfile(BaseModel):
     name: str
-    url: str
-    citations: int
-    h_index: int
-    i10_index: int
-    interests: List[str]
-    papers: List[str]
+    url: str = ""
+    citations: int = 0
+    h_index: int = 0
+    i10_index: int = 0
+    interests: List[str] = []
+    papers: List[str] = []
 
 class Person(BaseModel):
     name: str
@@ -94,13 +95,15 @@ class PersonMention:
 class AcademicCrawler:
     def __init__(self, openai_api_key: str, openai_api_base: str = "https://api.alibj.aiyu.fun/v1",
                  openai_timeout: int = 60, openai_max_retries: int = 3, openai_proxy: str = None):
+        # Create httpx client first and store reference for cleanup
+        self.httpx_client = httpx.AsyncClient(proxy=openai_proxy)
         self.clients = [
             AsyncOpenAI(
                 api_key=openai_api_key,
                 base_url=openai_api_base,
                 timeout=openai_timeout,
                 max_retries=openai_max_retries,
-                http_client=httpx.AsyncClient(proxy=openai_proxy),
+                http_client=self.httpx_client,
             )
         ]
         self.current_client_idx = 0
@@ -257,6 +260,9 @@ class AcademicCrawler:
         # Cleanup aiohttp session
         if self.session:
             await self.session.close()
+        # Cleanup httpx client
+        if self.httpx_client:
+            await self.httpx_client.aclose()
         # Cleanup searx
         await self.searx.cleanup()
 
@@ -529,7 +535,7 @@ class AcademicCrawler:
                         break
 
                     logger.info(f"Retrying {len(failed_urls)} failed URLs (attempt {attempt + 1}/{max_retries})")
-                    await asyncio.sleep(retry_delay * attempt)  # Exponential backoff
+                    await asyncio.sleep(self.retry_delay * attempt)  # Exponential backoff
 
                     retry_results = []
                     retry_failed = []
@@ -999,43 +1005,67 @@ class AcademicCrawler:
         return list(unique_people_dict.values())
 
     async def find_scholar_profile(self, person: Person) -> Optional[ScholarProfile]:
-        """Find Scholar profile with caching"""
-        cache_key = self.get_cache_key("scholar", person.name)
-        cache_file = self.cache_dir / "scholar" / f"{cache_key}.json"
-        
-        # Create scholar cache directory
-        (self.cache_dir / "scholar").mkdir(exist_ok=True)
-        
-        # Try to load from cache
-        if cache_file.exists():
-            logger.info(f"Loading cached Scholar profile for {person.name}")
-            with open(cache_file, 'r') as f:
-                data = json.load(f)
-                return ScholarProfile(**data) if data else None
-        
-        try:
-            client = await self.get_next_client()
-            response = await client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{
-                    "role": "user",
-                    "content": f"Find Google Scholar profile information for {person.name} from {person.affiliations[0] if person.affiliations else 'unknown'}"
-                }],
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
-            profile_data = json.loads(response.choices[0].message.content)
-            profile = ScholarProfile(**profile_data)
-            
-            # Save to cache
-            with open(cache_file, 'w') as f:
-                json.dump(profile.model_dump(), f)
-                
-            return profile
-            
-        except Exception as e:
-            logger.error(f"Error finding Scholar profile for {person.name}: {str(e)}")
-            return None
+        """Find Scholar profile with caching and Chinese name support"""
+        # Generate search variants (auto-generate pinyin variants for Chinese names)
+        search_names = generate_search_variants(person.name)
+
+        best_profile = None
+        best_citations = 0
+
+        for search_name in search_names:
+            # Create cache file for each variant
+            cache_key = self.get_cache_key("scholar", search_name)
+            cache_file = self.cache_dir / "scholar" / f"{cache_key}.json"
+
+            # Create scholar cache directory
+            (self.cache_dir / "scholar").mkdir(exist_ok=True)
+
+            logger.info(f"Searching Scholar profile for: {search_name}, affiliation: {person.affiliations[0] if person.affiliations else 'unknown'}")
+
+            # Try to load from cache
+            if cache_file.exists():
+                logger.info(f"Loading cached Scholar profile for {search_name}")
+                with open(cache_file, 'r') as f:
+                    data = json.load(f)
+                    if data:
+                        profile = ScholarProfile(**data)
+                        # Select the one with highest citations
+                        if profile.citations > best_citations:
+                            best_citations = profile.citations
+                            best_profile = profile
+                continue
+
+            try:
+                client = await self.get_next_client()
+                response = await client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{
+                        "role": "system",
+                        "content": "You are a helpful assistant that provides JSON output."
+                    }, {
+                        "role": "user",
+                        "content": f"Find Google Scholar profile information for {search_name} from {person.affiliations[0] if person.affiliations else 'unknown'}. Return the result as JSON with fields: name, citations, h_index, i10_index, interests (list), profile_url, papers (list of at least 5 representative papers with titles)."
+                    }],
+                    temperature=0.3,
+                    response_format={"type": "json_object"}
+                )
+                profile_data = json.loads(response.choices[0].message.content)
+                profile = ScholarProfile(**profile_data)
+
+                # Save to cache
+                with open(cache_file, 'w') as f:
+                    json.dump(profile.model_dump(), f)
+
+                # Select the one with highest citations
+                if profile.citations > best_citations:
+                    best_citations = profile.citations
+                    best_profile = profile
+
+            except Exception as e:
+                logger.error(f"Error finding Scholar profile for {search_name}: {str(e)}")
+                continue
+
+        return best_profile
 
     async def wait_for_rate_limit(self):
         """Implement rate limiting with anti-crawler config"""
@@ -1381,7 +1411,8 @@ class AcademicCrawler:
             urls_to_crawl.update(new_urls)
             
             depth += 1
-        
+
+        logger.info(f"Content collection for {person.name}: {len(content_collection)} pages")
         # 4. Process collected content with LLM
         if content_collection:
             try:
@@ -1423,7 +1454,23 @@ class AcademicCrawler:
                     updated_person.related_pages + [content['url'] for content in content_collection]
                 ))
                 updated_person.last_updated = datetime.now().isoformat()
-                
+
+                # 6. 获取 Google Scholar 数据
+                logger.info(f"Checking scholar profile for {updated_person.name}, affiliations: {updated_person.affiliations}")
+                if updated_person.name and updated_person.affiliations:
+                    try:
+                        logger.info(f"Calling find_scholar_profile for {updated_person.name}")
+                        scholar_profile = await self.find_scholar_profile(updated_person)
+                        if scholar_profile:
+                            updated_person.scholar_profile = scholar_profile
+                            logger.info(f"Found Scholar profile for {updated_person.name}: {scholar_profile.citations} citations")
+                        else:
+                            logger.warning(f"No Scholar profile found for {updated_person.name}")
+                    except Exception as e:
+                        logger.error(f"Error getting scholar profile for {updated_person.name}: {str(e)}")
+                else:
+                    logger.warning(f"Skipping Scholar profile for {updated_person.name}: name={updated_person.name}, affiliations={updated_person.affiliations}")
+
                 # Save to data directory
                 save_dir = self.profiles_dir / school.code.lower()
                 save_dir.mkdir(exist_ok=True)
@@ -1437,7 +1484,44 @@ class AcademicCrawler:
             except Exception as e:
                 logger.error(f"Error processing {person.name}: {str(e)}")
                 return person
-        
+        else:
+            # 没有爬取到内容，记录日志
+            logger.warning(f"No content collected for {person.name}")
+
+        # 6. 获取 Google Scholar 数据（无论是否有内容都尝试）
+        logger.info(f"Checking scholar profile for {person.name}, affiliations: {person.affiliations}")
+        if person.name and person.affiliations:
+            try:
+                logger.info(f"Calling find_scholar_profile for {person.name}")
+                scholar_profile = await self.find_scholar_profile(person)
+                if scholar_profile:
+                    person.scholar_profile = scholar_profile
+                    # Sync key fields to main object to avoid AI fabrication
+                    if scholar_profile.url:
+                        person.google_scholar = scholar_profile.url
+                    if scholar_profile.citations:
+                        person.citations = scholar_profile.citations
+                    # Merge research_interests (deduplicate)
+                    if scholar_profile.interests:
+                        existing_interests = set(person.research_interests)
+                        existing_interests.update(scholar_profile.interests)
+                        person.research_interests = list(existing_interests)
+                    # Merge papers (deduplicate)
+                    if scholar_profile.papers:
+                        existing_papers = set(person.papers)
+                        existing_papers.update(scholar_profile.papers)
+                        person.papers = list(existing_papers)
+                    logger.info(f"Found Scholar profile for {person.name}: {scholar_profile.citations} citations")
+                else:
+                    logger.warning(f"No Scholar profile found for {person.name}")
+            except Exception as e:
+                logger.error(f"Error getting scholar profile for {person.name}: {str(e)}")
+        else:
+            logger.warning(f"Skipping Scholar profile for {person.name}: name={person.name}, affiliations={person.affiliations}")
+
+        # Set last_updated timestamp
+        person.last_updated = datetime.now().isoformat()
+
         return person
 
     async def crawl_school(self, school: School, keywords: Keywords = None) -> List[Person]:
@@ -1650,13 +1734,13 @@ Please analyze the following pages and extract updated information in JSON forma
         for content in sorted_content:
             prompt += f"\nFrom {content['url']}:\nTitle: {content['title']}\n{content['content'][:2000]}\n---\n"
         
-        prompt += """\nProvide a JSON object with these fields:
+        prompt += """\nProvide a JSON object with these fields (IMPORTANT: Include as much detail as possible, especially for papers and research interests):
 {
     "current_position": "most recent position",
     "affiliations": ["current and past institutions"],
-    "research_interests": ["main research areas"],
+    "research_interests": ["main research areas - be very thorough"],
     "email": "academic email if public",
-    "papers": ["recent significant papers"],
+    "papers": ["list of representative papers with titles - include at least 3-5 significant papers found on the pages"],
     "citations": number or null,
     "h_index": number or null,
     "collaborators": ["key collaborators found"],
