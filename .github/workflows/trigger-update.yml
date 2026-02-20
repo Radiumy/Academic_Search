@@ -17,7 +17,7 @@ jobs:
       - name: Trigger parent repository
         run: |
           # 主仓库的 owner 和名称
-          PARENT_OWNER="202301-Belle"
+          PARENT_OWNER="sihan-shen"
           PARENT_REPO="Academic-Info-Main"
 
           # 获取触发本次更新的 commit SHA
