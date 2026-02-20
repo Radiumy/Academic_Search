@@ -1,0 +1,219 @@
+# Positive keywords - 用于匹配 faculty/people 页面
+positive:
+  # English keywords
+  - faculty
+  - people
+  - directory
+  - members
+  - staff
+  - team
+  # Chinese pinyin full words
+  - shizi
+  - shiziduiwu
+  - jiaoshi
+  - jiaozhi
+  - renyuan
+  - duiwu
+  # Full Chinese keywords
+  - 师资
+  - 师资状况
+  - 师资队伍
+  - 教师
+  - 教职
+  - 研究人员
+  - 队伍
+  - 教员
+  - 教职工
+  - 教职工名录
+
+# Blacklist - 用于排除非目标页面（关键词匹配）
+blacklist:
+  # 学生相关
+  - student
+  - students
+  - alumnus
+  - alumni
+  - graduate
+  - undergraduate
+  - postdoc
+  - postdoctoral
+
+  # 就业招聘
+  - employment
+  - career
+  - job
+  - internship
+  - recruit
+  - hire
+  - vacancy
+  - recruitment
+  - hiring
+
+  # 公告通知新闻
+  - announcement
+  - announcements
+  - notice
+  - notices
+  - bulletin
+  - news
+  - press
+  - event
+  - events
+  - headline
+  - headlines
+  - update
+  - updates
+
+  # 招生相关
+  - admission
+  - admissions
+  - apply
+  - fee
+  - tuition
+  - scholarship
+  - fellowship
+  - enrollment
+
+  # 退休行政
+  - 退休
+  - 行政管理人员
+  - administrative
+
+  # 奖项荣誉
+  - award
+  - awards
+  - honors
+  - honor
+  - achievement
+  - achievements
+  - recognition
+  - prize
+  - prizes
+
+  # 学术活动
+  - lecture
+  - colloquium
+  - seminar
+  - workshop
+  - conference
+  - symposium
+
+  # 社交媒体和外部服务
+  - twitter
+  - x.com
+  - facebook
+  - instagram
+  - linkedin
+  - youtube
+  - tiktok
+  - reddit
+  - dropbox
+  - cdn
+  - cloudflare
+  - cloudfront
+
+  # 页面类型
+  - service
+  - support
+  - contact
+  - terms
+  - privacy
+  - library
+  - hospital
+  - login
+  - signup
+  - register
+  - forgot
+  - reset
+  - admin
+  - blog
+  - download
+  - resource
+
+  # 学术资源
+  - courses
+  - class
+  - curriculum
+  - syllabus
+  - api
+  - feed
+  - sitemap
+  - robots
+  - search
+  - filter
+  - tag
+  - category
+  - archive
+  - browse
+  - nih
+  - arxiv
+  - pubmed
+  - pubmedcentral
+  - ncbi
+
+  # 中文关键词
+  - 公告
+  - 通知
+  - 新闻
+  - 动态
+  - 动态信息
+  - 招聘
+  - 引进
+  - 人才
+  - 录用
+  - 获奖
+  - 荣誉
+  - 表彰
+  - 成果
+  - 会议
+  - 学术会议
+  - 研讨会
+  - 报告会
+  - 本科生
+  - 研究生
+  - 博士
+  - 硕士
+  - 招生
+  - 录取
+  - 调剂
+  - 推免
+  - 校友
+  - 毕业生
+  - 就业
+
+# URL 黑名单 - 用于排除特定 URL 模式（正则表达式）
+blacklist_regex:
+  # 文件扩展名
+  - "\\.(jpg|jpeg|png|gif|pdf|zip|ico|svg|webp|mp4|mp3|avi|mov|wmv|flv|webm|doc|docx|xls|xlsx|ppt|pptx|txt|csv|json|xml|js|css)$"
+
+  # 查询参数
+  - "[?&]utm_"
+  - "[?&]source="
+  - "[?&]ref="
+  - "[?&]medium="
+  - "[?&]campaign="
+  - "[?&]term="
+  - "[?&]content="
+  - "[?&]page="
+  - "[?&]sort="
+  - "[?&]filter="
+
+# 域名黑名单 - 完全排除的域名
+blacklist_domain:
+  - twitter.com
+  - x.com
+  - facebook.com
+  - instagram.com
+  - linkedin.com
+  - youtube.com
+  - tiktok.com
+  - reddit.com
+  - dropbox.com
+  - cloudflare.com
+  - cloudfront.net
+  - arxiv.org
+  - pubmed.ncbi.nlm.nih.gov
+  - doi.org
+  - orcid.org
+  - dblp.org
+  - bit.ly

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Academic POI Crawler
 
 一个用于爬取大学和研究机构教授/研究人员信息的自动化工具。
@@ -9,19 +8,27 @@
 crawler-git/
 ├── main.py                    # 主入口程序
 ├── config/
-│   └── schools.yaml          # 学校配置
+│   ├── schools.yaml           # 学校配置
+│   └── keywords.yaml          # 关键词配置（正向/负向过滤）
 ├── src/
-│   ├── config.py             # 配置加载模块
-│   ├── crawler.py            # 旧版爬虫逻辑
-│   ├── person_crawler.py    # 新版爬虫逻辑（推荐）
-│   ├── test_searchxng.py    # SearXNG 测试工具
-│   ├── dfs_worker.py        # DFS 工作器
-│   ├── qdrant-author.py     # Qdrant 作者数据导入
-│   ├── qdrant-pubs.py       # Qdrant 论文数据导入
-│   └── logging_config.py    # 日志配置
-├── searxng_instances.json   # SearXNG 实例配置
-├── requirements.txt         # Python 依赖
-└── venv/                    # 虚拟环境
+│   ├── config.py              # 配置加载模块
+│   ├── crawler.py             # 主爬虫逻辑 (AcademicCrawler)
+│   ├── person_crawler.py      # 人员爬虫
+│   ├── crawl_schools.py       # 学校批量爬取
+│   ├── crawl_advisors.py      # 导师爬虫
+│   ├── dfs_worker.py          # DFS 工作器
+│   ├── main_person.py         # 人员主程序
+│   ├── qdrant-author.py       # Qdrant 作者数据导入
+│   ├── qdrant-pubs.py         # Qdrant 论文数据导入
+│   ├── test_searchxng.py      # SearXNG 测试工具
+│   ├── logging_config.py      # 日志配置
+│   └── debug_browser.py       # 浏览器调试工具
+├── searxng_instances.json     # SearXNG 实例配置
+├── requirements.txt            # Python 依赖
+├── cache/                     # 爬取缓存目录
+├── data/                      # 爬取数据输出目录
+├── logs/                      # 日志文件目录
+└── venv/                      # 虚拟环境
 ```
 
 ## 安装
@@ -62,11 +69,11 @@ crawler-git/
 
 ```yaml
 schools:
-  - name: "清华大学"
-    code: "tsinghua"
-    rank: 1
-    department: "计算机科学与技术系"
-    url: "https://www.cs.tsinghua.edu.cn/csen/"
+  - name: "南京大学"
+    code: "nju"
+    rank: 2
+    department: "计算机科学技术系"
+    url: "https://cs.nju.edu.cn/mainm.htm"
     tier: 1
 ```
 
@@ -77,6 +84,28 @@ schools:
 - `department`: 目标院系
 - `url`: 官网 URL
 - `tier`: 学校层级（1 为最高优先级）
+
+### 关键词配置 (config/keywords.yaml)
+
+```yaml
+positive:
+  - jz
+  - ry
+  - dw
+  - shizi
+  - 师资
+  - 师资队伍
+  - 教师
+  # ...
+
+negative:
+  -招聘
+  -应聘
+  # ...
+```
+
+- `positive`: 正向关键词，用于匹配目标页面
+- `negative`: 负向关键词，用于排除非目标页面
 
 ### SearXNG 实例配置 (searxng_instances.json)
 
@@ -115,11 +144,9 @@ python main.py --config config/schools.yaml --openai-proxy http://proxy:8080
 
 ```
 data/
-├── tsinghua/
+├── nju/
 │   ├── wang_xiaodong.json
 │   ├── li_ming.json
-│   └── ...
-├── peking/
 │   └── ...
 └── ...
 ```
@@ -139,6 +166,12 @@ data/
   "related_pages": ["相关页面"]
 }
 ```
+
+## 日志
+
+日志文件保存在 `logs/` 目录下，按时间戳命名：
+- `crawler_YYYYMMDD_HHMMSS.log` - 主日志文件
+- `latest.log` - 指向最新日志的软链接
 
 ## 依赖
 
@@ -160,6 +193,3 @@ data/
 2. **网络访问**：确保可以访问目标网站和 OpenAI API
 3. **礼貌爬取**：系统已内置速率限制，请勿修改过小以免对目标网站造成负担
 4. **数据验证**：提取的数据可能需要人工验证
-=======
-# Academic_Search
->>>>>>> origin/main

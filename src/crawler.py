@@ -17,8 +17,7 @@ import tqdm
 from datetime import datetime
 import random
 import time
-from src.config import School  # Add this line near other imports
-import pickle
+from src.config import School, Keywords, URLPatterns, AntiCrawlerConfig
 from pathlib import Path
 from flair.data import Sentence
 from flair.models import SequenceTagger
@@ -26,15 +25,8 @@ from src.test_searchxng import SearchXNGTester
 from crawl4ai.async_dispatcher import MemoryAdaptiveDispatcher, RateLimiter
 from crawl4ai import CrawlerMonitor, DisplayMode
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('crawler.log'),
-        logging.StreamHandler()
-    ]
-)
+from src.logging_config import configure_logging
+configure_logging()
 logger = logging.getLogger(__name__)
 
 class ScholarProfile(BaseModel):
@@ -67,7 +59,7 @@ class PageContent(BaseModel):
     url: str
     html: str
     text: str
-    title: str
+    title: str = ""
     links: List[Dict[str, Any]]
 
 class CachedPage(BaseModel):
@@ -100,9 +92,8 @@ class PersonMention:
         self.verified = False
 
 class AcademicCrawler:
-    def __init__(self, openai_api_key: str, openai_api_base: str = "https://api.alibj.aiyu.fun/v1", 
+    def __init__(self, openai_api_key: str, openai_api_base: str = "https://api.alibj.aiyu.fun/v1",
                  openai_timeout: int = 60, openai_max_retries: int = 3, openai_proxy: str = None):
-        # Replace old OpenAI initialization with new client
         self.clients = [
             AsyncOpenAI(
                 api_key=openai_api_key,
@@ -113,86 +104,88 @@ class AcademicCrawler:
             )
         ]
         self.current_client_idx = 0
-        
-        # Use default browser config that works
-        self.browser_config = BrowserConfig()  # Use default settings
-        
-        # Add URL filtering for faculty pages with more diverse patterns
-        self.faculty_url_patterns = [
-            # Faculty and People
-            "/faculty",
-            "/people",
-            "/members",
-            "/staff",
-            "/personnel",
-            "/team",
-            
-            # Role-based patterns
-            "/role/faculty",
-            "/role/faculty-cs",
-            "/role/faculty-ee",
-            "/role/faculty-aid",
-            "/professors",
-            "/instructors",
-            
-            # Research Groups and Labs
-            "/research",
-            "/groups",
-            "/labs",
-            "/laboratory",
-            "/group",
-            "/lab",
-            
-            # Directory and Organization
-            "/directory",
-            "/department",
-            "/about/people",
-            "/about/faculty",
-            
-            # Common URL patterns
-            "faculty-directory",
-            "faculty-profiles",
-            "research-groups",
-            "research-areas",
-            "principal-investigators",
-            "pi-profiles"
-        ]
 
-        # Add domain-specific patterns
-        self.domain_patterns = {
-            "mit.edu": ["/~", "/users/", "/people/"],
-            "stanford.edu": ["/~", "/people/", "/profiles/"],
-            "berkeley.edu": ["/~", "/users/", "/directory/"],
-            "cmu.edu": ["/~", "/directory/", "/people/"],
-            # Add more for other universities
-        }
-        
-        # Add browser retry logic
-        self.browser_retry_count = 3
+        # Load URL patterns from config
+        self.url_patterns = URLPatterns()
+
+        # Load keywords config (for blacklist filtering)
+        self.keywords = Keywords()
+
+        # Load anti-crawler config
+        self.anti_crawler = AntiCrawlerConfig()
+
+        # Initialize browser config from anti-crawler config
+        # Get anti-crawler settings
+        stealth_cfg = self.anti_crawler.stealth
+        context_cfg = self.anti_crawler.browser_context
+        rate_cfg = self.anti_crawler.rate_limiting
+
+        # Determine User-Agent mode
+        ua_mode = stealth_cfg.get('user_agent', {}).get('mode', 'random')
+        # User-Agent is handled by stealth mode, use default as fallback
+        user_agent = stealth_cfg.get('user_agent', {}).get('custom_pool', [None])[0] if ua_mode == 'custom' else None
+
+        # Build BrowserConfig with anti-crawler settings
+        self.browser_config = BrowserConfig(
+            viewport_width=context_cfg.get('viewport', {}).get('width', 1920),
+            viewport_height=context_cfg.get('viewport', {}).get('height', 1080),
+            viewport={'width': context_cfg.get('viewport', {}).get('width', 1920),
+                     'height': context_cfg.get('viewport', {}).get('height', 1080)},
+            text_mode=False,
+            user_agent=user_agent,
+            user_agent_mode=ua_mode if ua_mode != 'custom' else None,
+            light_mode=False,
+            # Enable stealth mode
+            enable_stealth=stealth_cfg.get('enabled', True),
+            # Add extra browser args
+            extra_args=self.anti_crawler.extra_args,
+            # Add init scripts for anti-detection
+            init_scripts=self.anti_crawler.init_scripts,
+        )
+
+        # Store rate limiting config for later use
+        self.rate_limiting = rate_cfg
+        self.request_count = 0
+
+        # Use patterns from config instead of hardcoded
+        self.category_patterns = self.url_patterns.category_patterns
+        self.profile_patterns = self.url_patterns.profile_patterns
+        self.profile_regex_patterns = self.url_patterns.profile_regex_patterns
+        self.exclude_patterns = self.url_patterns.exclude_patterns
+        self.max_path_depth = self.url_patterns.max_path_depth
+        self.allowed_roots = self.url_patterns.allowed_roots
+
+        # Browser settings - use anti-crawler config
+        self.browser_settings = {}
+
+        # Browser retry logic from anti-crawler config
+        self.browser_retry_count = rate_cfg.get('max_retries', 3)
         self.browser_retry_delay = 5
-        
+
         # Crawling parameters
         self.max_depth = 3
         self.max_pages_per_seed = 100
         self.visited_urls: Set[str] = set()
         self.crawled_content: List[PageContent] = []
-        
+
         # Initialize aiohttp session
         self.session = None
-        
+
         # Add retry configuration
         self.max_retries = 3
         self.retry_delay = 1
-        
+
         # Add progress tracking
         self.total_seeds = 0
         self.processed_seeds = 0
         self.total_people = 0
         self.processed_people = 0
-        
-        # Add rate limiting
-        self.request_delay = 2  # seconds between requests
+
+        # Add rate limiting (from anti_crawler config)
+        delay_range = self.rate_limiting.get('delay_range', [2, 5])
+        self.request_delay = sum(delay_range) / 2  # Use average as base delay
         self.last_request_time = 0
+        self.request_count = 0  # Track requests for dynamic delay
         
         # Add batch size config
         self.batch_size = 3  # number of concurrent requests
@@ -210,8 +203,8 @@ class AcademicCrawler:
         self.queries_cache.mkdir(exist_ok=True)
         self.pages_cache.mkdir(exist_ok=True)
 
-        # Load NER model
-        self.ner_tagger = SequenceTagger.load('flair/ner-english-large')
+        # NER model - lazy loaded on first use
+        self.ner_tagger = None
         
         # Search configuration
         self.search_base_url = "https://opnxng.com/search"
@@ -236,7 +229,7 @@ class AcademicCrawler:
                 rate_limit_codes=[429, 503, 504, 403]  # Added 403 for forbidden
             ),
             monitor=CrawlerMonitor(
-                enable_ui=True,
+                enable_ui=False,
                 max_width=120
             )
         )
@@ -248,6 +241,16 @@ class AcademicCrawler:
             self.session = aiohttp.ClientSession()
         # Initialize searx
         await self.searx.setup()
+
+        # Clear crawl4ai cache to ensure fresh crawl with new config
+        import os
+        cache_file = os.path.expanduser("~/.crawl4ai/crawl4ai.db")
+        if os.path.exists(cache_file):
+            try:
+                os.remove(cache_file)
+                logger.info("Cleared crawl4ai cache")
+            except Exception as e:
+                logger.warning(f"Could not clear crawl4ai cache: {e}")
 
     async def cleanup(self):
         """Cleanup resources"""
@@ -317,10 +320,38 @@ class AcademicCrawler:
                 domain = parsed.netloc.replace('.', '_')
                 path = re.sub(r'[^\w\-_.]', '_', parsed.path)
                 key = f"{domain}{path}"
-            except:
+            except Exception:
                 pass
                 
         return key.strip('_')
+
+    def extract_page_text(self, soup: BeautifulSoup, strict: bool = False) -> str:
+        """Extract text from page, preferring table text if it contains meaningful content.
+
+        Args:
+            soup: BeautifulSoup object of the page
+            strict: If True, only use table_text if it contains '博导', '教授', or '院士'.
+                    If False, use table_text if it contains '博导' or '教授'.
+
+        Returns:
+            Extracted text string
+        """
+        table_texts = []
+        for table in soup.find_all('table'):
+            table_texts.append(table.get_text(separator=' ', strip=True))
+        table_text = ' '.join(table_texts)
+        general_text = soup.get_text(separator=' ', strip=True)
+
+        if strict:
+            # Use table_text only if it has very meaningful content
+            if '博导' in table_text or '教授' in table_text or '院士' in table_text:
+                return table_text
+        else:
+            # Use table_text if it has meaningful content
+            if '博导' in table_text or '教授' in table_text:
+                return table_text
+
+        return general_text
 
     async def generate_search_queries(self, school: str, department: str) -> List[str]:
         """Generate search queries with caching"""
@@ -359,19 +390,21 @@ class AcademicCrawler:
     async def is_relevant_url(self, url: str) -> bool:
         """Check if URL is likely to contain faculty/researcher information"""
         url_lower = url.lower()
-        
-        # Check general patterns
-        if any(pattern in url_lower for pattern in self.faculty_url_patterns):
+
+        # Check exclude patterns first - use config patterns
+        if any(pattern in url_lower for pattern in self.exclude_patterns):
+            return False
+
+        # Check blacklist_regex patterns
+        if hasattr(self, 'keywords') and self.keywords:
+            if self.keywords.is_blacklisted(url):
+                return False
+
+        # Check category patterns from config (convert to lowercase for matching)
+        category_patterns_lower = [p.lower() for p in self.category_patterns]
+        if any(pattern in url_lower for pattern in category_patterns_lower):
             return True
-            
-        # Check domain-specific patterns
-        parsed_url = urlparse(url_lower)
-        domain = parsed_url.netloc
-        for known_domain, patterns in self.domain_patterns.items():
-            if known_domain in domain:
-                if any(pattern in url_lower for pattern in patterns):
-                    return True
-                
+
         return False
 
     async def get_seed_urls(self, school_name: str, department: str) -> Set[str]:
@@ -387,7 +420,7 @@ class AcademicCrawler:
                         url=search_url,
                         config=CrawlerRunConfig(
                             wait_for="css:#search",
-                            cache_mode=CacheMode.ENABLED  # Enable caching
+                            cache_mode=CacheMode.BYPASS  # Bypass cache to avoid schema issues
                         )
                     )
                     
@@ -408,19 +441,35 @@ class AcademicCrawler:
         return urls
 
     async def batch_crawl_urls(self, urls: List[str]) -> List[PageContent]:
-        """Crawl multiple URLs in parallel with proper rate limiting"""
+        """Crawl multiple URLs in parallel with proper rate limiting and retry"""
         results = []
-        
+
+        # Get browser context config
+        context_cfg = self.anti_crawler.browser_context
+        rate_cfg = self.anti_crawler.rate_limiting
+        max_retries = rate_cfg.get('max_retries', 3)
+
         async with AsyncWebCrawler(config=self.browser_config) as crawler:
             run_config = CrawlerRunConfig(
-                cache_mode=CacheMode.ENABLED,
+                cache_mode=CacheMode.BYPASS,  # Bypass cache to avoid schema issues
                 session_id="academic_crawler",
-                excluded_tags=["script", "style", "nav", "footer"],
+                excluded_tags=["script", "style", "img", "video", "audio"],  # 忽略图片、视频、音频资源
                 keep_data_attributes=True,
-                check_robots_txt=True,  # Respect robots.txt
-                stream=True  # Enable streaming mode to get async iterator
+                check_robots_txt=False,  # Respect robots.txt
+                stream=True,  # Enable streaming mode to get async iterator
+                # Load from anti-crawler config
+                wait_for=context_cfg.get('wait_for', 'body'),
+                delay_before_return_html=context_cfg.get('delay_before_return_html', 2),
+                page_timeout=context_cfg.get('page_timeout', 60000),
+                # Anti-crawler: locale and timezone
+                locale=context_cfg.get('locale', 'en-US'),
+                timezone_id=context_cfg.get('timezone_id', 'America/New_York'),
             )
-            
+
+            # First attempt
+            failed_urls = []
+            successful_urls = []
+
             try:
                 # Get the async iterator
                 async_results = await crawler.arun_many(
@@ -428,40 +477,108 @@ class AcademicCrawler:
                     config=run_config,
                     dispatcher=self.dispatcher
                 )
-                
+
                 # Process results as they come in
                 async for result in async_results:
                     if result.success:
-                        # Process successful result
-                        soup = BeautifulSoup(result.cleaned_html or result.html, 'html.parser')
-                        cleaned_text = soup.get_text(separator=' ', strip=True)
-                        
+                        successful_urls.append(result.url)
+                        # Process successful result - use raw HTML to preserve table content
+                        soup = BeautifulSoup(result.html, 'html.parser')
+
+                        # Extract text using helper method
+                        cleaned_text = self.extract_page_text(soup, strict=True)
+
                         # Extract links
                         all_links = []
                         for link_type in ["internal", "external"]:
                             all_links.extend(result.links.get(link_type, []))
-                        
-                        # Create page content
+
+                        # Create page content - ensure title is not None
+                        page_title = result.metadata.get('title') or ''
                         page_content = PageContent(
                             url=result.url,
                             html=result.html,
                             text=cleaned_text,
-                            title=result.metadata.get('title', ''),
+                            title=page_title,
                             links=all_links
                         )
-                        
+
                         # Try to load from cache first
                         if not await self.load_from_cache(result.url):
                             # Cache the result if not already cached
                             await self.cache_page_content(page_content)
-                        
+
+                        # Add to crawled_content for entity extraction
+                        self.crawled_content.append(page_content)
+
                         results.append(page_content)
                     else:
+                        # Collect failed URLs for retry
+                        error_msg = result.error_message or ""
+                        if "ERR_ABORTED" in error_msg or "net::" in error_msg or "navigation" in error_msg.lower():
+                            failed_urls.append(result.url)
                         logger.warning(f"Failed to crawl {result.url}: {result.error_message}")
-                        
+
             except Exception as e:
                 logger.error(f"Error in batch crawling: {str(e)}")
-                
+
+            # Retry failed URLs (e.g., ERR_ABORTED errors)
+            if failed_urls and max_retries > 1:
+                for attempt in range(1, max_retries):
+                    if not failed_urls:
+                        break
+
+                    logger.info(f"Retrying {len(failed_urls)} failed URLs (attempt {attempt + 1}/{max_retries})")
+                    await asyncio.sleep(retry_delay * attempt)  # Exponential backoff
+
+                    retry_results = []
+                    retry_failed = []
+
+                    try:
+                        async_retry = await crawler.arun_many(
+                            urls=failed_urls,
+                            config=run_config,
+                            dispatcher=self.dispatcher
+                        )
+
+                        async for result in async_retry:
+                            if result.success:
+                                retry_results.append(result.url)
+                                soup = BeautifulSoup(result.html, 'html.parser')
+
+                                # Extract text using helper method
+                                cleaned_text = self.extract_page_text(soup)
+
+                                all_links = []
+                                for link_type in ["internal", "external"]:
+                                    all_links.extend(result.links.get(link_type, []))
+
+                                page_title = result.metadata.get('title') or ''
+                                page_content = PageContent(
+                                    url=result.url,
+                                    html=result.html,
+                                    text=cleaned_text,
+                                    title=page_title,
+                                    links=all_links
+                                )
+
+                                if not await self.load_from_cache(result.url):
+                                    await self.cache_page_content(page_content)
+
+                                self.crawled_content.append(page_content)
+                                results.append(page_content)
+                            else:
+                                error_msg = result.error_message or ""
+                                if "ERR_ABORTED" in error_msg or "net::" in error_msg:
+                                    retry_failed.append(result.url)
+                                logger.warning(f"Retry failed for {result.url}: {result.error_message}")
+
+                    except Exception as e:
+                        logger.error(f"Error in retry batch crawling: {str(e)}")
+
+                    failed_urls = retry_failed
+                    logger.info(f"Retry completed: {len(retry_results)} succeeded, {len(retry_failed)} still failed")
+
         return results
 
     async def cache_page_content(self, page_content: PageContent):
@@ -506,12 +623,13 @@ class AcademicCrawler:
                 with open(cache_meta, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
                 
-                # Create PageContent object
+                # Create PageContent object - ensure title is not None
+                page_title = metadata.get('title') or ''
                 page_content = PageContent(
                     url=url,
                     html=html,
                     text=BeautifulSoup(html, 'html.parser').get_text(separator=' ', strip=True),
-                    title=metadata.get('title', ''),
+                    title=page_title,
                     links=metadata.get('links', [])
                 )
                 
@@ -536,18 +654,21 @@ class AcademicCrawler:
             
         # Collect URLs to crawl in parallel
         urls_to_crawl = {url}
-        
+
         # Crawl the initial URL and collect more URLs
         results = await self.batch_crawl_urls([url])
         if results:
             for page_content in results:
                 for link in page_content.links:
                     next_url = link["href"]
-                    if (self.is_same_domain(url, next_url) and 
-                        await self.is_relevant_url(next_url) and 
+                    if (self.is_same_domain(url, next_url) and
+                        await self.is_relevant_url(next_url) and
                         next_url not in self.visited_urls):
                         urls_to_crawl.add(next_url)
-        
+                        logger.debug(f"Discovered URL: {next_url}")
+
+        logger.info(f"Crawling {len(urls_to_crawl)} URLs at depth {depth}: {list(urls_to_crawl)[:5]}...")
+
         # Batch crawl collected URLs
         if depth < self.max_depth and urls_to_crawl:
             await self.batch_crawl_urls(list(urls_to_crawl))
@@ -562,24 +683,209 @@ class AcademicCrawler:
         except:
             return False
 
+    async def extract_faculty_links(self, html: str, base_url: str, keywords=None) -> List[str]:
+        """从页面 HTML 中提取包含关键词的链接，并排除匹配 blacklist 关键词的链接
+
+        Args:
+            html: 页面的原始 HTML
+            base_url: 用于解析相对链接的基准 URL
+            keywords: Keywords 对象、positive 关键词列表、或 None（使用默认配置）
+
+        Returns:
+            包含关键词的链接列表
+        """
+        if isinstance(keywords, Keywords):
+            positive = keywords.positive
+            blacklist = keywords.blacklist
+        elif isinstance(keywords, list):
+            positive = keywords
+            blacklist = []
+        else:
+            kw_obj = Keywords()
+            positive = kw_obj.positive
+            blacklist = kw_obj.blacklist
+
+        soup = BeautifulSoup(html, 'html.parser')
+        links = []
+
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag['href']
+            # 获取链接文本，保留中文用于匹配
+            text = a_tag.get_text(strip=True)
+
+            # Skip empty hrefs or javascript links
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:')):
+                continue
+
+            # 修复1：清理 href 中的空白字符
+            href = href.strip()
+
+            # 首先检查链接文本或 href 是否包含关键词
+            # 对 href 进行小写匹配（英文）
+            href_lower = href.lower()
+
+            # 对文本进行小写匹配（英文）和原文匹配（中文）
+            text_lower = text.lower()
+            text_pure = text  # 保留原文用于中文匹配
+
+            # 检查是否匹配 positive 关键词
+            matched = False
+            for kw in positive:
+                # 对于英文关键词，使用小写匹配
+                if kw.isascii():
+                    kw_lower = kw.lower()
+                    if kw_lower in href_lower:
+                        matched = True
+                        break
+                    if kw_lower in text_lower:
+                        matched = True
+                        break
+                else:
+                    # 对于中文关键词，直接在原文文本中匹配
+                    if kw in text_pure:
+                        matched = True
+                        break
+
+            if not matched:
+                continue  # 不匹配 positive 关键词，跳过
+
+            # 检查是否匹配 blacklist 关键词（URL 路径或链接文本任一匹配即排除）
+            excluded = False
+            for nkw in blacklist:
+                if nkw.isascii():
+                    nkw_lower = nkw.lower()
+                    if nkw_lower in href_lower or nkw_lower in text_lower:
+                        excluded = True
+                        break
+                else:
+                    if nkw in text_pure or nkw in href:
+                        excluded = True
+                        break
+
+            if excluded:
+                logger.debug(f"Excluded by blacklist keyword: {href} ({text})")
+                continue
+
+            # 匹配的链接，进行 URL 验证和转换
+            # 修复2：全面 URL 规范化，避免 crawl4ai 异常处理
+            absolute_url = urljoin(base_url, href)
+
+            # 验证 URL 格式是否有效
+            try:
+                parsed = urlparse(absolute_url)
+                # 确保 URL 有有效的 scheme 和 netloc
+                if not parsed.scheme or not parsed.netloc:
+                    logger.warning(f"无效 URL 格式: {absolute_url}")
+                    continue
+                # 检查 path 中是否有空格（可能导致 crawl4ai 截断）
+                if parsed.path and ' ' in parsed.path:
+                    logger.warning(f"URL path 包含空格: {absolute_url}")
+                    continue
+            except Exception as e:
+                logger.warning(f"URL 解析错误: {absolute_url}, {e}")
+                continue
+
+            links.append(absolute_url)
+
+        return list(set(links))  # 去重
+
+    async def extract_detail_page_links(self, html: str, base_url: str) -> List[str]:
+        """从栏目页面提取每个人的详情页链接"""
+        soup = BeautifulSoup(html, 'html.parser')
+        links = []
+
+        # 合并所有详情页模式（从配置加载）
+        all_profile_patterns = self.profile_patterns + self.profile_regex_patterns
+
+        for a_tag in soup.find_all('a', href=True):
+            href = a_tag.get('href', '')
+            if not href or href.startswith(('javascript:', 'mailto:', 'tel:', '#')):
+                continue
+
+            # 检查是否匹配详情页模式（从配置加载）
+            is_detail = any(re.search(p, href, re.IGNORECASE) for p in all_profile_patterns)
+            if not is_detail:
+                continue
+
+            # 检查是否应排除（从配置加载）
+            should_exclude = any(re.search(p, href, re.IGNORECASE) for p in self.exclude_patterns)
+            if should_exclude:
+                continue
+
+            # 转换为绝对 URL
+            absolute_url = urljoin(base_url, href)
+
+            # 使用 is_valid_profile_url 验证
+            if not self.is_valid_profile_url(absolute_url):
+                continue
+
+            links.append(absolute_url)
+
+        return list(set(links))
+
+    def is_valid_profile_url(self, url: str) -> bool:
+        """验证是否为有效的导师个人主页 URL"""
+        parsed = urlparse(url)
+        path = parsed.path
+        path_parts = [p for p in path.split('/') if p]
+
+        # 路径深度检查（从配置加载）
+        if len(path_parts) > self.max_path_depth:
+            return False
+
+        # 根路径检查（从配置加载）
+        if path_parts:
+            root = path_parts[0].lower()
+            # 允许的根路径 或 ~username 或 c开头的ID (支持 c2639a153642 格式)
+            # 或者根路径是纯数字（用于某些大学网站的特殊格式如 /58/xx/xxx/）
+            if (root not in self.allowed_roots and
+                not root.startswith('~') and
+                not re.match(r'^c[a-z0-9]+', root) and
+                not root.isdigit()):
+                return False
+
+        return True
+
     async def batch_extract_entities(self, contents: List[PageContent]) -> List[Person]:
         """Extract people information from multiple pages using GPT-4"""
         chunk_size = 5
         chunks = [contents[i:i + chunk_size] for i in range(0, len(contents), chunk_size)]
-        
+
+        # Get extraction fields from config
+        llm_cfg = self.url_patterns.llm_extraction
+        include_fields = llm_cfg.get('include_fields', [])
+        exclude_fields = llm_cfg.get('exclude_fields', [])
+
         all_people = []
-        
+
         for chunk in chunks:
+            # Debug: show URLs in this chunk
+            logger.debug(f"Processing chunk with URLs: {[content.url for content in chunk]}")
+
+            # Debug: show text length for each page
+            for content in chunk:
+                logger.debug(f"=== DEBUG: Page {content.url}")
+                logger.debug(f"=== DEBUG: Title: {content.title}")
+                logger.debug(f"=== DEBUG: Text length: {len(content.text)}")
+                logger.debug(f"=== DEBUG: Text preview: {content.text[:500]}")
+
             combined_text = "\n---\n".join([
-                f"URL: {content.url}\nTitle: {content.title}\n" + 
+                f"URL: {content.url}\nTitle: {content.title}\n" +
                 f"Links: {', '.join(link['href'] for link in content.links if 'mailto:' in link['href'])}\n" +
                 f"Content: {content.text[:2000]}"  # Include more content
                 for content in chunk
             ])
-            
+
             client = await self.get_next_client()
             logger.debug(f"Processing chunk with URLs: {[content.url for content in chunk]}")
-            
+
+            # Build extraction instructions from config
+            extraction_instructions = ""
+            if include_fields:
+                extraction_instructions += f"Required fields: {', '.join(include_fields)}\n"
+            if exclude_fields:
+                extraction_instructions += f"Do NOT include: {', '.join(exclude_fields)}\n"
+
             try:
                 response = await client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -587,6 +893,7 @@ class AcademicCrawler:
                         "role": "user",
                         "content": f"""Extract faculty/researcher information from these pages.
                         Pay special attention to email addresses and links. Do not give examples or simulations or fake data, if there is no information, just return an empty array, this is very important!
+                        {extraction_instructions}
                         For each person found, return their details in this exact JSON format:
                         {{
                             "name": "Full Name",
@@ -609,11 +916,18 @@ class AcademicCrawler:
                 
                 logger.debug(f"Raw API response: {response.choices[0].message.content}")
                 try:
-                    print(response.choices[0].message.content)
                     response_json = json.loads(response.choices[0].message.content)
-                    # Ensure we have a list of people
-                    if isinstance(response_json, dict) and "people" in response_json:
-                        people_data = response_json["people"]
+                    # Ensure we have a list of people - handle different response formats
+                    if isinstance(response_json, dict):
+                        if "people" in response_json:
+                            people_data = response_json["people"]
+                        elif "faculty" in response_json:
+                            people_data = response_json["faculty"]
+                        elif "members" in response_json:
+                            people_data = response_json["members"]
+                        else:
+                            logger.error(f"Unexpected response format: {response_json}")
+                            continue
                     elif isinstance(response_json, list):
                         people_data = response_json
                     else:
@@ -649,23 +963,40 @@ class AcademicCrawler:
         return all_people
 
     def deduplicate_people(self, people: List[Person]) -> List[Person]:
-        """Deduplicate people based on name and affiliation similarity"""
-        unique_people = []
-        seen_names = set()
-        
+        """Deduplicate people based on name and merge information from duplicates"""
+        unique_people_dict: Dict[str, Person] = {}
+
         for person in people:
             normalized_name = re.sub(r'[^\w\s]', '', person.name.lower())
-            if normalized_name not in seen_names:
-                seen_names.add(normalized_name)
-                unique_people.append(person)
+            if normalized_name not in unique_people_dict:
+                unique_people_dict[normalized_name] = person
             else:
-                # Merge information if this is the same person
-                for existing in unique_people:
-                    if re.sub(r'[^\w\s]', '', existing.name.lower()) == normalized_name:
-                        existing.related_pages.extend(person.related_pages)
-                        # Merge other fields as needed
-        
-        return unique_people
+                # Merge information from duplicate person
+                existing = unique_people_dict[normalized_name]
+                # Merge lists (deduplicate)
+                if person.related_pages:
+                    existing.related_pages = list(set(existing.related_pages + person.related_pages))
+                if person.research_interests:
+                    existing.research_interests = list(set(existing.research_interests + person.research_interests))
+                if person.papers:
+                    existing.papers = list(set(existing.papers + person.papers))
+                # Merge string fields (keep longer non-empty value)
+                for field, new_val in [
+                    ('email', person.email),
+                    ('personal_page', person.personal_page),
+                    ('group_page', person.group_page),
+                    ('google_scholar', person.google_scholar),
+                ]:
+                    if new_val and (
+                        not getattr(existing, field) or
+                        len(new_val) > len(getattr(existing, field))
+                    ):
+                        setattr(existing, field, new_val)
+                # Merge numeric fields (keep larger value)
+                if person.citations > existing.citations:
+                    existing.citations = person.citations
+
+        return list(unique_people_dict.values())
 
     async def find_scholar_profile(self, person: Person) -> Optional[ScholarProfile]:
         """Find Scholar profile with caching"""
@@ -693,7 +1024,6 @@ class AcademicCrawler:
                 temperature=0.3,
                 response_format={"type": "json_object"}
             )
-            print(response.choices[0].message.content)
             profile_data = json.loads(response.choices[0].message.content)
             profile = ScholarProfile(**profile_data)
             
@@ -708,15 +1038,32 @@ class AcademicCrawler:
             return None
 
     async def wait_for_rate_limit(self):
-        """Implement rate limiting"""
+        """Implement rate limiting with anti-crawler config"""
+        # Get dynamic delay from anti_crawler config
+        delay = self.anti_crawler.get_random_delay()
+
+        # Add extra delay for long running sessions
+        increase_every = self.rate_limiting.get('increase_every', 30)
+        if self.request_count > 0 and self.request_count % increase_every == 0:
+            long_run_increase = self.rate_limiting.get('long_run_delay_increase', 0.5)
+            delay += long_run_increase
+            logger.debug(f"Long run detected, adding {long_run_increase}s extra delay")
+
         now = time.time()
         time_since_last = now - self.last_request_time
-        if time_since_last < self.request_delay:
-            await asyncio.sleep(self.request_delay - time_since_last)
+        if time_since_last < delay:
+            await asyncio.sleep(delay - time_since_last)
+
         self.last_request_time = time.time()
+        self.request_count += 1
 
     async def extract_people_mentions(self, text: str, context_window: int = 200) -> List[PersonMention]:
         """Extract people mentions using Flair NER"""
+        # Lazy load NER model on first use
+        if self.ner_tagger is None:
+            logger.info("Loading NER model (first use)...")
+            self.ner_tagger = SequenceTagger.load('flair/ner-english-large')
+
         sentence = Sentence(text)
         self.ner_tagger.predict(sentence)
         
@@ -916,16 +1263,16 @@ class AcademicCrawler:
     def save_person_profile(self, person: Person, school: School) -> None:
         """Save person profile with smart merging"""
         # Create school directory
-        school_dir = self.profiles_dir / school.name.lower().replace(' ', '_')
+        school_dir = self.profiles_dir / school.code.lower()
         school_dir.mkdir(exist_ok=True)
-        
+
         # Generate filename from person's name
         safe_name = re.sub(r'[^\w\s-]', '', person.name.lower()).replace(' ', '_')
         profile_path = school_dir / f"{safe_name}.json"
-        
+
         # Convert person to dict
         new_data = person.model_dump()
-        
+
         # If profile exists, merge with existing data
         if profile_path.exists():
             try:
@@ -1078,9 +1425,9 @@ class AcademicCrawler:
                 updated_person.last_updated = datetime.now().isoformat()
                 
                 # Save to data directory
-                save_dir = self.profiles_dir / school.name.lower().replace(' ', '_')
+                save_dir = self.profiles_dir / school.code.lower()
                 save_dir.mkdir(exist_ok=True)
-                
+
                 save_path = save_dir / f"{person.name.lower().replace(' ', '_')}.json"
                 with open(save_path, 'w') as f:
                     json.dump(updated_person.model_dump(), f, indent=2)
@@ -1093,37 +1440,81 @@ class AcademicCrawler:
         
         return person
 
-    async def crawl_school(self, school: School) -> List[Person]:
-        """Modified to use improved person processing"""
+    async def crawl_school(self, school: School, keywords: Keywords = None) -> List[Person]:
+        """Modified to use improved person processing with root page extraction"""
         await self.setup()
-        
+
         logger.info(f"Starting crawl for {school.name} (Tier {school.tier}) - {school.department}")
-        
-        # Initial crawl to find people
-        seed_urls = {school.url}
+
         base_url = school.url.rstrip('/')
-        
-        for path in ['/people', '/faculty', '/directory']:
-            seed_urls.add(f"{base_url}{path}")
-        
+
+        # Use per-school keywords override, or the provided Keywords object, or defaults
+        if school.keywords is not None:
+            kw_for_extract = school.keywords
+        elif keywords is not None:
+            kw_for_extract = keywords
+        else:
+            kw_for_extract = Keywords()
+
         self.visited_urls.clear()
         self.crawled_content.clear()
-        
-        # Process seeds in batches
-        for url in seed_urls:
-            await self.crawl_site(url)
-        
-        # Extract people from crawled content
+
+        # Step 1: Crawl the root page first
+        logger.info(f"Crawling root page: {school.url}")
+        root_results = await self.batch_crawl_urls([school.url])
+
+        # Step 2: Extract faculty links from root page
+        faculty_links = []
+        if root_results and root_results[0].html:
+            logger.info(f"Extracting faculty links from root page...")
+            faculty_links = await self.extract_faculty_links(
+                root_results[0].html,
+                school.url,
+                kw_for_extract
+            )
+            logger.info(f"Found {len(faculty_links)} candidate links from root page: {faculty_links[:5]}...")
+
+        # Step 3: 如果从根页面没有找到链接，不使用直接拼接方案，而是跳过
+
+        # 如果仍然没有找到链接，记录警告但继续执行
+        if not faculty_links:
+            logger.warning("No faculty links found from root page!")
+
+        # Step 4: Crawl the discovered faculty links (category pages)
+        category_urls = list(set(faculty_links))
+        logger.info(f"Crawling {len(category_urls)} faculty/people pages...")
+        category_results = await self.batch_crawl_urls(category_urls)
+
+        # Add category results to crawled_content
+        self.crawled_content.extend(category_results)
+
+        # Step 5: Extract detail page links from category pages
+        all_detail_urls = set()
+        for result in category_results:
+            if result.html:
+                detail_links = await self.extract_detail_page_links(result.html, result.url)
+                all_detail_urls.update(detail_links)
+                logger.info(f"从 {result.url} 提取到 {len(detail_links)} 个详情页链接")
+
+        # Step 6: Crawl detail pages
+        if all_detail_urls:
+            detail_results = await self.batch_crawl_urls(list(all_detail_urls))
+            self.crawled_content.extend(detail_results)
+            logger.info(f"Crawled {len(detail_results)} detail pages")
+        else:
+            logger.warning("未找到详情页链接，退回到使用栏目页内容")
+
+        # Step 7: Extract people from crawled content
         people = await self.batch_extract_entities(self.crawled_content)
         unique_people = self.deduplicate_people(people)
-        
+
         # Process each person
         processed_people = []
         for person in tqdm.tqdm(unique_people, desc="Processing people"):
             processed_person = await self.process_person(person, school)
             processed_people.append(processed_person)
             await asyncio.sleep(random.uniform(1, 3))  # Prevent rate limiting
-        
+
         await self.cleanup()
         return processed_people
 

@@ -1,7 +1,30 @@
 schools:
-  - name: "清华大学"
-    code: "tsinghua"
-    rank: 1
+   #- name: "清华大学"
+   #  code: "tsinghua"
+   #  rank: 1
+   #  department: "计算机科学与技术系"  
+   #  url: "https://www.cs.tsinghua.edu.cn/"
+   #  tier: 1
+  
+  #- name: "北京大学"
+  #  code: "pku"
+  #  rank: 2
+  #  department: "计算机科学技术系"
+  #  url: "https://cs.pku.edu.cn/"
+  #  tier: 1
+
+
+  #- name: "南京大学"
+  #  code: "nju"
+  #  rank: 3
+  #  department: "计算机科学技术系"
+  #  url: "https://cs.nju.edu.cn/main.htm"
+  #  tier: 1
+
+  - name: "中国科学技术大学"
+    code: "ustc"
+    rank: 3
     department: "计算机科学与技术系"
-    url: "https://www.cs.tsinghua.edu.cn/csen/"
+    url: "https://cs.ustc.edu.cn/"
     tier: 1
+
