@@ -3,6 +3,8 @@ import json
 import os
 from typing import List, Dict, Set, Optional, Tuple, Any
 from pydantic import BaseModel, Field
+from scholarly import scholarly
+from concurrent.futures import ThreadPoolExecutor
 from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from openai import AsyncOpenAI
@@ -458,7 +460,6 @@ class AcademicCrawler:
         async with AsyncWebCrawler(config=self.browser_config) as crawler:
             run_config = CrawlerRunConfig(
                 cache_mode=CacheMode.BYPASS,  # Bypass cache to avoid schema issues
-                session_id="academic_crawler",
                 excluded_tags=["script", "style", "img", "video", "audio"],  # 忽略图片、视频、音频资源
                 keep_data_attributes=True,
                 check_robots_txt=False,  # Respect robots.txt
@@ -1005,7 +1006,7 @@ class AcademicCrawler:
         return list(unique_people_dict.values())
 
     async def find_scholar_profile(self, person: Person) -> Optional[ScholarProfile]:
-        """Find Scholar profile with caching and Chinese name support"""
+        """Find Scholar profile using scholarly library with caching and Chinese name support"""
         # Generate search variants (auto-generate pinyin variants for Chinese names)
         search_names = generate_search_variants(person.name)
 
@@ -1036,21 +1037,29 @@ class AcademicCrawler:
                 continue
 
             try:
-                client = await self.get_next_client()
-                response = await client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{
-                        "role": "system",
-                        "content": "You are a helpful assistant that provides JSON output."
-                    }, {
-                        "role": "user",
-                        "content": f"Find Google Scholar profile information for {search_name} from {person.affiliations[0] if person.affiliations else 'unknown'}. Return the result as JSON with fields: name, citations, h_index, i10_index, interests (list), profile_url, papers (list of at least 5 representative papers with titles)."
-                    }],
-                    temperature=0.3,
-                    response_format={"type": "json_object"}
+                # Use ThreadPoolExecutor to run synchronous scholarly in async context
+                loop = asyncio.get_event_loop()
+                with ThreadPoolExecutor() as executor:
+                    author = await loop.run_in_executor(
+                        executor,
+                        self._search_scholar_author,
+                        search_name
+                    )
+
+                if not author:
+                    logger.warning(f"No Google Scholar profile found for {search_name}")
+                    continue
+
+                # Extract profile data
+                profile = ScholarProfile(
+                    name=author.get('name', ''),
+                    url=author.get('urlscholar', ''),
+                    citations=author.get('citedby', 0),
+                    h_index=author.get('hindex', 0),
+                    i10_index=author.get('i10index', 0),
+                    interests=author.get('interests', []),
+                    papers=[pub.get('bib', {}).get('title', '') for pub in author.get('publications', [])[:10]]
                 )
-                profile_data = json.loads(response.choices[0].message.content)
-                profile = ScholarProfile(**profile_data)
 
                 # Save to cache
                 with open(cache_file, 'w') as f:
@@ -1066,6 +1075,22 @@ class AcademicCrawler:
                 continue
 
         return best_profile
+
+    def _search_scholar_author(self, search_name: str) -> Optional[dict]:
+        """Synchronous helper to search for author using scholarly"""
+        try:
+            search_query = scholarly.search_author(search_name)
+            author = next(search_query, None)
+
+            if not author:
+                return None
+
+            # Fill author details to get publications
+            author = scholarly.fill(author)
+            return author
+        except Exception as e:
+            logger.error(f"Scholar search error for {search_name}: {str(e)}")
+            return None
 
     async def wait_for_rate_limit(self):
         """Implement rate limiting with anti-crawler config"""
